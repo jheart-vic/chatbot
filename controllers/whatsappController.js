@@ -6,8 +6,22 @@ import { parseOrderIntent } from "../helpers/openAi.js";
 
 export const handleIncomingMessage = async (req, res) => {
   try {
-    const { from, body, profile } = req.body; // profile may contain WhatsApp name
-    const text = body.toLowerCase();
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const message = value?.messages?.[0];
+    const contact = value?.contacts?.[0];
+
+    if (!message) {
+      return res.sendStatus(200); // nothing to process
+    }
+
+    const from = message.from;                     // sender’s WhatsApp number
+    const body = message.text?.body || "";         // message text
+    const profile = contact?.profile || {};        // user profile
+
+    console.log("📩 Incoming:", { from, body, profile });
+
     let reply = "";
 
     // 1️⃣ Find or create user
@@ -21,20 +35,21 @@ export const handleIncomingMessage = async (req, res) => {
       });
     }
 
-    // Check onboarding completeness
+    // 2️⃣ Onboarding
     if (!user.fullName || !user.address || !user.preferences?.fragrance) {
       reply =
         "👋 Welcome to CHUVI Laundry! Please send your *full name*, *address*, and *preferences* (e.g. fragrance, folding style, ironing).";
       await sendWhatsAppMessage(from, reply);
-      return res.json({ status: "ok" });
+      return res.sendStatus(200);
     }
 
-    // 2️⃣ Handle order intent
+    const text = body.toLowerCase();
+
+    // 3️⃣ Handle order
     if (text.includes("order") || text.includes("wash")) {
       const parsed = await parseOrderIntent(body);
 
       if (parsed.items.length > 0) {
-        // TODO: Replace with real pricing logic
         const pricePerItem = 500;
         const totalAmount = parsed.items.reduce(
           (sum, i) => sum + i.quantity * pricePerItem,
@@ -46,10 +61,9 @@ export const handleIncomingMessage = async (req, res) => {
           items: parsed.items,
           status: "Pending",
           price: totalAmount,
-          dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days later
+          dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
         });
 
-        // Loyalty cashback (1.5%)
         const earned = totalAmount * 0.015;
         user.loyaltyBalance += earned;
         user.totalOrders += 1;
@@ -66,52 +80,42 @@ export const handleIncomingMessage = async (req, res) => {
       }
     }
 
-    // 3️⃣ Handle status requests
+    // 4️⃣ Handle status
     else if (text.includes("status")) {
       const order = await Order.findOne({ userId: user._id }).sort({
         createdAt: -1,
       });
 
-      if (order) {
-        reply = `📦 Hi ${user.fullName}, your last order is currently: *${order.status}*`;
-        if (order.status === "Ready") {
-          await Notification.create({
-            userId: user._id,
-            type: "ready",
-            message: reply,
-          });
-        }
-      } else {
-        reply = "❌ You don’t have any active orders.";
-      }
+      reply = order
+        ? `📦 Hi ${user.fullName}, your last order is currently: *${order.status}*`
+        : "❌ You don’t have any active orders.";
     }
 
-    // 4️⃣ Handle loyalty requests
+    // 5️⃣ Handle loyalty
     else if (text.includes("loyalty") || text.includes("points")) {
       reply = `🎁 Hi ${user.fullName}, you have ₦${user.loyaltyBalance.toFixed(
         2
       )} in loyalty cashback.`;
     }
 
-    // 5️⃣ Fallback
+    // 6️⃣ Fallback
     else {
       reply =
         "👋 Hi! I’m CHUVI, your laundry assistant.\n\nYou can say:\n- 'Order 3 shirts'\n- 'Check status'\n- 'Loyalty balance'";
     }
 
-    // Send reply
     await sendWhatsAppMessage(from, reply);
 
-    // Log notification
     await Notification.create({
       userId: user._id,
       type: "chat",
       message: reply,
     });
 
-    res.json({ status: "ok" });
+    res.sendStatus(200);
   } catch (error) {
     console.error("❌ Error handling WhatsApp message:", error);
-    res.status(500).json({ error: "Internal server error" });
+    res.sendStatus(500);
   }
 };
+
