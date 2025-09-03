@@ -1,5 +1,5 @@
 import express from "express";
-import { onboardUser, getLoyaltyBalance, updatePreferences } from "../controllers/UserController.js";
+import { onboardUser, getLoyaltyBalance, updatePreferences } from "../controllers/userController.js";
 
 const router = express.Router();
 
