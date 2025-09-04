@@ -3,6 +3,7 @@ import { handleIncomingMessage } from "../controllers/whatsappController.js";
 
 const router = express.Router();
 
+router.post("/webhook", handleIncomingMessage);
 
 // WhatsApp webhook endpoint
 router.get("/webhook", (req, res) => {
@@ -19,7 +20,5 @@ router.get("/webhook", (req, res) => {
     res.sendStatus(403);
   }
 });
-
-router.post("/webhook", handleIncomingMessage);
 
 export default router;

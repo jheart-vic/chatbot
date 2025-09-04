@@ -143,8 +143,7 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
 
     // 6️⃣ Log bot reply
     await Message.create({ userId: user._id, from: "bot", text: botReply });
-
-    res.sendStatus(200);
+    return res.status(200).end();
   } catch (err) {
     console.error("❌ Bot Error:", err);
     res.sendStatus(500);
