@@ -64,11 +64,18 @@ export const handleIncomingMessage = async (
 
     switch (intent) {
       case 'create_order': {
-        // ✅ Regex parser first (handles 40, twenty, etc.)
+        // ✅ Regex parser first
         let parsed = await parseOrderIntent(text)
 
         // ⚠️ AI fallback only if regex fails
         if (!parsed.items || parsed.items.length === 0) {
+          // 👉 If the user only typed "order" or similar keywords, guide them
+          if (/^(order|wash|laundry|pickup|drop|iron)$/i.test(text.trim())) {
+            botReply =
+              '🧺 Sure! What would you like me to wash? Please tell me like: *Wash 3 shirts and 2 trousers*.'
+            break // ⛔ stop here
+          }
+
           try {
             let response = await processUserMessage(
               user._id,
@@ -81,7 +88,7 @@ export const handleIncomingMessage = async (
             } else {
               console.error('❌ parseOrderIntent fallback failed:', err.message)
             }
-            parsed = { items: [] } // fail safe
+            parsed = { items: [] }
           }
         }
 
@@ -97,14 +104,13 @@ export const handleIncomingMessage = async (
             items: parsed.items,
             status: 'Pending',
             price: subtotal,
-            dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000) // 2 days
+            dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
           })
 
           user.loyaltyBalance += subtotal * 0.015
           user.totalOrders += 1
           await user.save()
 
-          // ✅ Clean WhatsApp reply
           const itemList = parsed.items
             .map(i => `- ${i.quantity} ${i.name}`)
             .join('\n')
@@ -114,12 +120,18 @@ export const handleIncomingMessage = async (
           ).toFixed(2)}`
         } else {
           botReply =
-            '🤔 I couldn’t detect your order. Please try again with details like: *Wash 3 shirts and 2 trousers*.'
+            '🧺 Please tell me the items you’d like me to wash. Example: *Wash 3 shirts and 2 trousers*.'
         }
         break
       }
 
       case 'track_order': {
+        if (/^(track|status|where|progress)$/i.test(text.trim())) {
+          botReply =
+            '🔎 Sure! Which order would you like me to check — your last one, or a specific order ID?'
+          break
+        }
+
         const lastOrder = await Order.findOne({ userId: user._id }).sort({
           createdAt: -1
         })
@@ -130,9 +142,13 @@ export const handleIncomingMessage = async (
       }
 
       case 'check_loyalty':
-        botReply = `🎁 You have ₦${user.loyaltyBalance.toFixed(
-          2
-        )} in loyalty cashback.`
+        if (/^(points|loyalty|rewards)$/i.test(text.trim())) {
+          botReply = '🎁 Checking your loyalty points…'
+        } else {
+          botReply = `🎁 You have ₦${user.loyaltyBalance.toFixed(
+            2
+          )} in loyalty cashback.`
+        }
         break
 
       case 'greeting':
