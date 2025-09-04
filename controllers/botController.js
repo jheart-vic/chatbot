@@ -53,8 +53,23 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
 
     switch (intent) {
       case "create_order": {
-        const parsed = parseOrderIntent(text);
-        if (parsed.items.length > 0) {
+        // Try regex parser first
+        let parsed = parseOrderIntent(text);
+
+        // If regex fails, fallback to AI parser
+        if (!parsed.items || parsed.items.length === 0) {
+          try {
+            parsed = await processUserMessage(
+              user._id,
+              `Extract items and quantities from this laundry order: "${text}". Reply in JSON format like {"items":[{"name":"shirts","quantity":3}]}`
+            );
+            parsed = JSON.parse(parsed);
+          } catch (err) {
+            console.error("❌ parseOrderIntent fallback failed:", err.message);
+          }
+        }
+
+        if (parsed.items && parsed.items.length > 0) {
           const pricePerItem = 500;
           const subtotal = parsed.items.reduce(
             (sum, i) => sum + i.quantity * pricePerItem,
@@ -80,13 +95,15 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
           ).toFixed(2)}`;
         } else {
           botReply =
-            "🤔 I didn’t catch your order details. Try: *Wash 3 shirts and 2 trousers*.";
+            "🤔 I couldn’t detect your order. Try: *Wash 3 shirts and 2 trousers*.";
         }
         break;
       }
 
       case "track_order": {
-        const lastOrder = await Order.findOne({ userId: user._id }).sort({ createdAt: -1 });
+        const lastOrder = await Order.findOne({ userId: user._id }).sort({
+          createdAt: -1,
+        });
         botReply = lastOrder
           ? `📦 Your last order is currently: *${lastOrder.status}*`
           : "❌ You have no active orders.";
@@ -94,7 +111,9 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
       }
 
       case "check_loyalty":
-        botReply = `🎁 You have ₦${user.loyaltyBalance.toFixed(2)} in loyalty cashback.`;
+        botReply = `🎁 You have ₦${user.loyaltyBalance.toFixed(
+          2
+        )} in loyalty cashback.`;
         break;
 
       case "greeting":
@@ -113,7 +132,6 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
 
     // 6️⃣ Log bot reply
     await Message.create({ userId: user._id, from: "bot", text: botReply });
-    await Notification.create({ userId: user._id, type: "chat", message: botReply });
 
     res.sendStatus(200);
   } catch (err) {
