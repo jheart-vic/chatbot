@@ -4,7 +4,6 @@ import { sendWhatsAppMessage } from "../helpers/whatsApp.js";
 import User from "../models/User.js";
 import Order from "../models/Order.js";
 import Message from "../models/Message.js";
-import Notification from "../models/Notification.js";
 
 export const handleIncomingMessage = async ({ from, text, profile }, res) => {
   try {
@@ -53,19 +52,24 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
 
     switch (intent) {
       case "create_order": {
-        // Try regex parser first
+        // ✅ Regex parser first (handles 40, twenty, etc.)
         let parsed = parseOrderIntent(text);
 
-        // If regex fails, fallback to AI parser
+        // ⚠️ AI fallback only if regex fails
         if (!parsed.items || parsed.items.length === 0) {
           try {
-            parsed = await processUserMessage(
+            let response = await processUserMessage(
               user._id,
               `Extract items and quantities from this laundry order: "${text}". Reply in JSON format like {"items":[{"name":"shirts","quantity":3}]}`
             );
-            parsed = JSON.parse(parsed);
+            parsed = JSON.parse(response);
           } catch (err) {
-            console.error("❌ parseOrderIntent fallback failed:", err.message);
+            if (err.message.includes("429")) {
+              console.warn("⚠️ OpenAI quota exceeded — skipping AI fallback.");
+            } else {
+              console.error("❌ parseOrderIntent fallback failed:", err.message);
+            }
+            parsed = { items: [] }; // fail safe
           }
         }
 
@@ -95,7 +99,7 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
           ).toFixed(2)}`;
         } else {
           botReply =
-            "🤔 I couldn’t detect your order. Try: *Wash 3 shirts and 2 trousers*.";
+            "🤔 I couldn’t detect your order. Please try again with details like: *Wash 3 shirts and 2 trousers*.";
         }
         break;
       }
