@@ -128,7 +128,14 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
         break;
 
       default:
-        botReply = await processUserMessage(user._id, text); // AI fallback
+        try {
+          // Try AI if available
+          botReply = await processUserMessage(user._id, text);
+        } catch (err) {
+          console.warn("⚠️ OpenAI unavailable for fallback:", err.message);
+          botReply =
+            "🤖 I didn’t fully get that, but you can place an order, track it, or check your loyalty balance.";
+        }
     }
 
     // 5️⃣ Send reply
