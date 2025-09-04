@@ -89,9 +89,10 @@ function normalizeItemName (name) {
     towel: 'towels',
     bedspread: 'bedspreads',
     bedsheet: 'bedsheets',
-    pillow: 'pillowcases',
-    'pillow case': 'pillowcases',
-    pillowcase: 'pillowcases',
+      pillow: "pillowcases",
+    pillowcase: "pillowcases",   // singular case
+    "pillow case": "pillowcases", // spaced case
+    pillowcases: "pillowcases",  // plural directly
     curtain: 'curtains',
     suit: 'suits',
     skirt: 'skirts',
@@ -107,8 +108,11 @@ function normalizeItemName (name) {
 }
 
 // 👉 Expanded fallback regex: supports more laundry items
+// const itemRegex =
+//   /(\d+)\s*(shirts?|trousers?|shorts?|jeans?|dresses?|towels?|bedspreads?|bedsheets?|pillow\s?cases?|curtains?|suits?|skirts?|blouses?|jackets?|sweaters?|blankets?)/i
 const itemRegex =
-  /(\d+)\s*(shirts?|trousers?|shorts?|jeans?|dresses?|towels?|bedspreads?|bedsheets?|pillow\s?cases?|curtains?|suits?|skirts?|blouses?|jackets?|sweaters?|blankets?)/i
+  /(\d+)\s*(shirts?|trousers?|shorts?|jeans?|dresses?|towels?|bedspreads?|bedsheets?|pillowcases?|pillow\s?case|curtains?|suits?|skirts?|blouses?|jackets?|sweaters?|blankets?)/i;
+
 
 // 👉 Word-number regex (final version, supports up to 300)
 const wordRegex = new RegExp(
