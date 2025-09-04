@@ -8,6 +8,8 @@ const messageSchema = new mongoose.Schema(
     intent: { type: String }, // e.g., "create_order", "track_order"
     conversationId: { type: String }, // optional for session grouping
     timestamp: { type: Date, default: Date.now },
+    externalId: { type: String, unique: true, sparse: true },
+
   },
   { timestamps: true }
 );
