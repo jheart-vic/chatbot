@@ -5,7 +5,7 @@ import User from "../models/User.js";
 import Order from "../models/Order.js";
 import Message from "../models/Message.js";
 
-export const handleIncomingMessage = async ({ from, text, profile }, res) => {
+export const handleIncomingMessage = async ({ from, text, profile, messageId }, res) => {
   try {
     // 1️⃣ Ensure user exists
     let user = await User.findOne({ phone: from });
@@ -42,7 +42,7 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
     }
 
     // 3️⃣ Save user message
-    await Message.create({ userId: user._id, from: "user", text });
+    await Message.create({ userId: user._id, from: "user", text, externalId: messageId });
 
     // 4️⃣ Detect intent
     const intent = detectIntent(text);
@@ -142,7 +142,7 @@ export const handleIncomingMessage = async ({ from, text, profile }, res) => {
     await sendWhatsAppMessage(from, botReply);
 
     // 6️⃣ Log bot reply
-    await Message.create({ userId: user._id, from: "bot", text: botReply });
+    await Message.create({ userId: user._id, from: "bot", text: botReply, });
     return res.status(200).end();
   } catch (err) {
     console.error("❌ Bot Error:", err);

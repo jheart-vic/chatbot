@@ -1,6 +1,5 @@
-// controllers/whatsappController.js
 import { handleIncomingMessage as botHandler } from "./botController.js";
-import Message from "../models/Message.js"; // ✅ import your Message model
+import Message from "../models/Message.js";
 
 export const handleIncomingMessage = async (req, res) => {
   try {
@@ -13,26 +12,18 @@ export const handleIncomingMessage = async (req, res) => {
     const from = message.from;
     const text = message.text?.body?.trim() || "";
     const profile = contact?.profile || {};
-    const messageId = message.id; // ✅ WhatsApp unique ID
+    const messageId = message.id; // WhatsApp unique ID
 
     console.log("📩 Incoming webhook:", { from, text, profile, messageId });
 
-    // 🚫 Deduplicate: skip if message already processed
+    // 🚫 Deduplicate: skip if already saved
     const already = await Message.findOne({ externalId: messageId });
     if (already) {
       console.log("⏭️ Skipping duplicate message:", messageId);
       return res.sendStatus(200);
     }
 
-    // ✅ Save raw message with externalId
-    await Message.create({
-      userId: null, // will be filled in botController
-      from: "user",
-      text,
-      externalId: messageId,
-    });
-
-    // Pass clean data to bot logic
+    // ✅ Just pass to bot logic — let botController handle saving
     await botHandler({ from, text, profile, messageId }, res);
   } catch (err) {
     console.error("❌ WhatsApp Webhook Error:", err);
