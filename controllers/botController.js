@@ -53,7 +53,7 @@ export const handleIncomingMessage = async ({ from, text, profile, messageId }, 
     switch (intent) {
       case "create_order": {
         // ✅ Regex parser first (handles 40, twenty, etc.)
-        let parsed = parseOrderIntent(text);
+        let parsed = await parseOrderIntent(text);
 
         // ⚠️ AI fallback only if regex fails
         if (!parsed.items || parsed.items.length === 0) {
@@ -142,7 +142,7 @@ export const handleIncomingMessage = async ({ from, text, profile, messageId }, 
     await sendWhatsAppMessage(from, botReply);
 
     // 6️⃣ Log bot reply
-    await Message.create({ userId: user._id, from: "bot", text: botReply, });
+    await Message.create({ userId: user._id, from: "bot", text: botReply, externalId: `bot-${messageId}`});
     return res.status(200).end();
   } catch (err) {
     console.error("❌ Bot Error:", err);
