@@ -22,7 +22,7 @@ export const handleIncomingMessage = async (req, res) => {
       console.log("⏭️ Skipping duplicate message:", messageId);
       return res.sendStatus(200);
     }
-
+    res.sendStatus(200);
     // ✅ Just pass to bot logic — let botController handle saving
     await botHandler({ from, text, profile, messageId }, res);
   } catch (err) {

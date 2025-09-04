@@ -183,7 +183,7 @@ Return JSON with:
  * 🔹 Conversational AI with memory
  */
 export async function processUserMessage (userId, userMessage) {
-  await Message.create({ userId, from: 'user', text: userMessage })
+  // await Message.create({ userId, from: 'user', text: userMessage })
 
   const history = await Message.find({ userId })
     .sort({ createdAt: -1 })
@@ -208,6 +208,6 @@ export async function processUserMessage (userId, userMessage) {
   })
 
   const reply = res.choices[0].message.content
-  await Message.create({ userId, from: 'bot', text: reply })
+  // await Message.create({ userId, from: 'bot', text: reply })
   return reply
 }
