@@ -5,6 +5,6 @@ const router = express.Router();
 
 router.get("/loyalty/:phone", getLoyaltyBalance);
 router.post("/onboard", onboardUser);
-router.post("/preference",updatePreferences);
+router.post("/preference", updatePreferences);
 
 export default router;

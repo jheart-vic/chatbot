@@ -11,14 +11,6 @@ import staffAlertRoutes from "./routes/staffAlertRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
 // import paymentRoutes from "./routes/paymentRoutes.js";
 
-import"./jobs/employeeJob.js"
-import"./jobs/equipmentJob.js"
-import"./jobs/financialJob.js"
-import"./jobs/inventoryJob.js"
-import"./jobs/orderJob.js"
-import "./jobs/reminderJob.js";
-
-
 dotenv.config();
 
 const app = express();

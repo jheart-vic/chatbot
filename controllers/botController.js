@@ -8,6 +8,18 @@ import { sendWhatsAppMessage } from '../helpers/whatsApp.js'
 import User from '../models/User.js'
 import Order from '../models/Order.js'
 import Message from '../models/Message.js'
+import { DateTime } from 'luxon'
+import { calculatePrice } from '../helpers/pricing.js'
+import { assignEmployee } from '../helpers/employeeAssignment.js'
+
+const STATUS_EMOJIS = {
+  Pending: '⏳',
+  'In Wash': '🧺',
+  Ironing: '👔',
+  Packaging: '🎁',
+  Ready: '✅',
+  Delivered: '🚚'
+}
 
 export const handleIncomingMessage = async (
   { from, text, profile, messageId },
@@ -19,20 +31,21 @@ export const handleIncomingMessage = async (
     if (!user) {
       user = await User.create({
         phone: from,
-        fullName: profile?.name || 'WhatsApp User',
+        whatsappName: profile?.name || 'WhatsApp User',
+        fullName: null,
         loyaltyBalance: 0,
         totalOrders: 0
       })
-      console.log(`👤 New user created: ${user.fullName} (${from})`)
     }
 
     // 2️⃣ Smart onboarding
     if (!user.fullName || !user.address) {
       const lines = text.split('\n').map(l => l.trim())
-      if (lines.length >= 2) {
-        user.fullName = user.fullName || lines[0]
+      if (lines.length >= 1) {
+        user.fullName = user.fullName || lines[0] || user.whatsappName
         user.address = user.address || lines[1]
         user.preferences = user.preferences || { fragrance: lines[2] || '' }
+        user.isOnboarded = true
         await user.save()
 
         await sendWhatsAppMessage(
@@ -64,80 +77,230 @@ export const handleIncomingMessage = async (
 
     switch (intent) {
       case 'create_order': {
-        // ✅ Regex parser first
         let parsed = await parseOrderIntent(text)
 
-        // ⚠️ AI fallback only if regex fails
         if (!parsed.items || parsed.items.length === 0) {
-          // 👉 If the user only typed "order" or similar keywords, guide them
-          if (/^(order|wash|laundry|pickup|drop|iron)$/i.test(text.trim())) {
-            botReply =
-              '🧺 Sure! What would you like me to wash? Please tell me like: *Wash 3 shirts and 2 trousers*.'
-            break // ⛔ stop here
-          }
-
-          try {
-            let response = await processUserMessage(
-              user._id,
-              `Extract items and quantities from this laundry order: "${text}". Reply in JSON format like {"items":[{"name":"shirts","quantity":3}]}`
-            )
-            parsed = JSON.parse(response)
-          } catch (err) {
-            if (err.message.includes('429')) {
-              console.warn('⚠️ OpenAI quota exceeded — skipping AI fallback.')
-            } else {
-              console.error('❌ parseOrderIntent fallback failed:', err.message)
-            }
-            parsed = { items: [] }
-          }
+          botReply =
+            '🧺 Please tell me what you’d like me to wash. Example: *Wash 3 shirts and 2 trousers*.'
+          break
         }
 
-        if (parsed.items && parsed.items.length > 0) {
-          const pricePerItem = 500
-          const subtotal = parsed.items.reduce(
-            (sum, i) => sum + i.quantity * pricePerItem,
-            0
-          )
-
-          const order = await Order.create({
-            userId: user._id,
-            items: parsed.items,
-            status: 'Pending',
-            price: subtotal,
-            dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
-          })
-
-          user.loyaltyBalance += subtotal * 0.015
-          user.totalOrders += 1
-          await user.save()
-
-          const itemList = parsed.items
-            .map(i => `- ${i.quantity} ${i.name}`)
-            .join('\n')
-
-          botReply = `✅ Order placed!\n\n🧺 Items:\n${itemList}\n\n💵 Total: ₦${subtotal.toLocaleString()}\n📅 Ready by: ${order.dueDate.toDateString()}\n🎁 Loyalty earned: ₦${(
-            subtotal * 0.015
-          ).toFixed(2)}`
-        } else {
+        // 🔹 If turnaround missing, ask user
+        if (!parsed.turnaround) {
           botReply =
-            '🧺 Please tell me the items you’d like me to wash. Example: *Wash 3 shirts and 2 trousers*.'
+            '⏱ How fast do you need it?\n- Standard (48h)\n- Express (24h, +40%)\n- Same-day (6–8h, +80%, ≤15 items)'
+          break
+        }
+
+        // 🔹 If delivery distance missing, ask user
+        if (parsed.distanceKm === null) {
+          botReply =
+            '🚚 Do you need pickup/delivery? If yes, how far are you from us (in km)?\nExample: *2 km*'
+          break
+        }
+
+        // ✅ Everything available → calculate price
+        const {
+          items: pricedItems,
+          subtotal,
+          deliveryFee,
+          total,
+          warnings,
+          missingServices
+        } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
+
+        // 🔹 Ask service choice if missing
+        if (missingServices.length > 0) {
+          botReply = `🧺 I see you want to wash:\n${missingServices.join(
+            ', '
+          )}\n\nHow should I handle them?\n- Wash & Iron\n- Wash & Fold\n- Iron Only`
+          break
+        }
+
+        // 🔹 Set due date using Luxon (Nigeria time)
+        let now = DateTime.now().setZone('Africa/Lagos')
+        let dueDate = now
+        if (parsed.turnaround === 'express') {
+          dueDate = now.plus({ hours: 24 })
+        } else if (parsed.turnaround === 'same-day') {
+          dueDate = now.plus({ hours: 8 }) // upper bound
+        } else {
+          dueDate = now.plus({ hours: 48 })
+        }
+
+        // ✅ Create order with enriched items
+        const order = await Order.create({
+          userId: user._id,
+          items: pricedItems, // 👈 full breakdown
+          status: 'Pending',
+          price: total,
+          loyaltyEarned: total * 0.015,
+          dueDate: dueDate.toJSDate()
+        })
+
+        // ✅ Auto-assign staff after order is created
+        let assignedEmployee = null
+
+        const dominantService = pricedItems[0]?.service
+        if (dominantService === 'washIron' || dominantService === 'washFold') {
+          assignedEmployee = await assignEmployee(order._id, 'washer')
+        } else if (dominantService === 'ironOnly') {
+          assignedEmployee = await assignEmployee(order._id, 'ironer')
+        }
+
+        // Update user stats
+        user.loyaltyBalance += total * 0.015
+        user.totalOrders += 1
+        await user.save()
+
+        // Format item list for WhatsApp
+        const itemList = pricedItems
+          .map(
+            i =>
+              `- ${i.quantity} ${i.name} (${i.service}) @ ₦${i.unitPrice} = ₦${i.lineTotal}`
+          )
+          .join('\n')
+
+        const dueDateStr = dueDate
+          .setZone('Africa/Lagos')
+          .toFormat('EEE d MMM, h:mma')
+
+        botReply = `✅ Order placed!\n\n🧺 Items:\n${itemList}\n\n💵 Subtotal: ₦${subtotal.toLocaleString()}\n🚚 Delivery: ₦${deliveryFee.toLocaleString()}\n📦 Total: ₦${total.toLocaleString()}\n\n⏱ Turnaround: *${
+          parsed.turnaround
+        }*\n📅 Ready by: ${dueDateStr}\n🎁 Loyalty earned: ₦${(
+          total * 0.015
+        ).toFixed(2)}`
+
+        if (warnings.length > 0) {
+          botReply += `\n\n⚠️ Notes:\n${warnings.join('\n')}`
         }
         break
       }
 
-      case 'track_order': {
-        if (/^(track|status|where|progress)$/i.test(text.trim())) {
+      case 'update_preferences': {
+        const lower = text.toLowerCase()
+        const updates = {}
+
+        if (lower.includes('fragrance')) {
+          updates.fragrance = text.split('fragrance')[1]?.trim()
+        }
+        if (lower.includes('fold')) {
+          updates.foldingStyle = text.split('fold')[1]?.trim()
+        }
+        if (lower.includes('iron')) {
+          updates.ironingInstructions = text.split('iron')[1]?.trim()
+        }
+
+        if (Object.keys(updates).length === 0) {
           botReply =
-            '🔎 Sure! Which order would you like me to check — your last one, or a specific order ID?'
+            '🤔 Please specify which preference to update (fragrance, folding, ironing).'
           break
         }
 
-        const lastOrder = await Order.findOne({ userId: user._id }).sort({
-          createdAt: -1
+        user.preferences = { ...user.preferences.toObject(), ...updates }
+        await user.save()
+
+        botReply = `✨ Preferences updated!
+          - Fragrance: ${user.preferences.fragrance || 'not set'}
+          - Folding: ${user.preferences.foldingStyle || 'not set'}
+          - Ironing: ${user.preferences.ironingInstructions || 'not set'}`
+
+        // Save as a notification
+        await Notification.create({
+          userId: user._id,
+          type: 'preference',
+          message: `Preferences updated: ${changes.join(', ')}`,
+          status: 'sent'
         })
-        botReply = lastOrder
-          ? `📦 Your last order is currently: *${lastOrder.status}*`
-          : '❌ You have no active orders.'
+        break
+      }
+
+      case 'track_order': {
+        const lower = text.toLowerCase()
+
+        // Case 1: "last order"
+        if (/last/.test(lower)) {
+          const lastOrder = await Order.findOne({ userId: user._id }).sort({
+            createdAt: -1
+          })
+          if (!lastOrder) {
+            botReply = '❌ You have no active orders.'
+          } else {
+            const itemList = lastOrder.items
+              .map(i => `- ${i.quantity} ${i.name} (${i.service})`)
+              .join('\n')
+
+            const emoji = STATUS_EMOJIS[lastOrder.status] || '📦'
+            botReply = `${emoji} Your last order (${lastOrder.orderCode}) is *${
+              lastOrder.status
+            }*.\n\n🧺 Items:\n${itemList}\n\n📅 Due: ${DateTime.fromJSDate(
+              lastOrder.dueDate
+            )
+              .setZone('Africa/Lagos')
+              .toFormat(
+                'EEE d MMM, h:mma'
+              )}\n💵 Total: ₦${lastOrder.price.toLocaleString()}`
+          }
+          break
+        }
+
+        // Case 2: "Track ORD-XXXX"
+        const codeMatch = text.match(/ord-\w+/i)
+        if (codeMatch) {
+          const orderCode = codeMatch[0].toUpperCase()
+          const order = await Order.findOne({ orderCode, userId: user._id })
+          if (!order) {
+            botReply = '❌ No order found under your account with that ID.'
+          } else {
+            const itemList = order.items
+              .map(i => `- ${i.quantity} ${i.name} (${i.service})`)
+              .join('\n')
+
+            const emoji = STATUS_EMOJIS[order.status] || '📦'
+            botReply = `${emoji} Order ${order.orderCode} is *${
+              order.status
+            }*.\n\n🧺 Items:\n${itemList}\n\n📅 Due: ${DateTime.fromJSDate(
+              order.dueDate
+            )
+              .setZone('Africa/Lagos')
+              .toFormat(
+                'EEE d MMM, h:mma'
+              )}\n💵 Total: ₦${order.price.toLocaleString()}`
+          }
+          break
+        }
+
+        // Case 3: List active orders
+        if (/all|active/.test(lower)) {
+          const activeOrders = await Order.find({
+            userId: user._id,
+            status: { $ne: 'Delivered' }
+          }).sort({ createdAt: -1 })
+
+          if (activeOrders.length === 0) {
+            botReply = '✅ You have no active orders.'
+          } else {
+            botReply =
+              '📋 Your active orders:\n\n' +
+              activeOrders
+                .map(o => {
+                  const emoji = STATUS_EMOJIS[o.status] || '📦'
+                  return `${emoji} ${o.orderCode}: *${
+                    o.status
+                  }*, ₦${o.price.toLocaleString()}, due ${DateTime.fromJSDate(
+                    o.dueDate
+                  )
+                    .setZone('Africa/Lagos')
+                    .toFormat('EEE d MMM')}`
+                })
+                .join('\n')
+          }
+          break
+        }
+
+        // Fallback
+        botReply =
+          '🔎 Please tell me which order to track.\nExample: *last order*, *Track ORD-123ABC*, or *Track all*.'
         break
       }
 

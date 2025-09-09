@@ -22,15 +22,29 @@ export const onboardUser = async (req, res) => {
 };
 
 // Update user preferences
+// Update user preferences (partial update)
 export const updatePreferences = async (req, res) => {
   try {
     const { phone, preferences } = req.body;
-    const user = await User.findOneAndUpdate(
-      { phone },
-      { $set: { preferences } },
-      { new: true }
-    );
-    res.json({ success: true, user });
+
+    let user = await User.findOne({ phone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Merge existing preferences with new ones
+    user.preferences = {
+      ...user.preferences.toObject(), // keep existing
+      ...preferences, // overwrite only provided keys
+    };
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: "Preferences updated successfully",
+      preferences: user.preferences,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
