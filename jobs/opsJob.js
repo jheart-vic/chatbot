@@ -4,6 +4,8 @@ import Inventory from "../models/Inventory.js";
 import Equipment from "../models/Equipment.js";
 import Notification from "../models/Notification.js";
 import { sendWhatsAppMessage } from "../helpers/whatsApp.js";
+import dotenv from "dotenv";
+dotenv.config();
 
 /**
  * Ops Job
