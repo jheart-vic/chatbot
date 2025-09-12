@@ -43,7 +43,7 @@ export function calculatePrice(items, turnaround = "standard", distanceKm = 0) {
   const enrichedItems = items.map((item) => {
     const name = item.name.toLowerCase()
     const qty = item.quantity || 1
-    const service = item.service?.toLowerCase()
+    const service = item.service
 
     if (!service) {
       missingServices.push(item.name)
