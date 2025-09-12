@@ -605,7 +605,7 @@ export const handleIncomingMessage = async (
 
         user.loyaltyBalance += total * 0.015
         user.totalOrders += 1
-        user.conversationState = null
+        user.conversationState = { step: null, tempOrder: {} }
         await user.save()
 
         const itemList = pricedItems
