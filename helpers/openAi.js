@@ -1,27 +1,47 @@
 // helpers/openAi.js
-import "dotenv/config"
-import OpenAI from "openai"
-import Message from "../models/Message.js"
+import 'dotenv/config'
+import OpenAI from 'openai'
+import Message from '../models/Message.js'
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 // 🔹 Intents with keyword shortcuts
 const keywordIntents = {
-  create_order: ["order", "wash", "laundry", "pickup", "drop", "iron"],
-  track_order: ["track", "status", "where", "progress"],
-  check_loyalty: ["points", "loyalty", "rewards"],
-  greeting: ["hi", "hello", "hey", "good morning", "good evening"],
-  update_preferences: ["fragrance", "preference", "folding", "iron only", "change", "update"],
+  create_order: [
+    'order',
+    'wash',
+    'laundry',
+    'pickup',
+    'drop',
+    'iron',
+    'shirt',
+    'trouser',
+    'suit',
+    'bedsheet',
+    'pillow',
+    'blanket'
+  ],
+  track_order: ['track', 'status', 'where', 'progress'],
+  check_loyalty: ['points', 'loyalty', 'rewards'],
+  greeting: ['hi', 'hello', 'hey', 'good morning', 'good evening'],
+  update_preferences: [
+    'fragrance',
+    'preference',
+    'folding',
+    'iron only',
+    'change',
+    'update'
+  ]
 }
 
-export const detectIntent = (text) => {
+export const detectIntent = text => {
   const lower = text.toLowerCase()
   for (const [intent, keywords] of Object.entries(keywordIntents)) {
-    if (keywords.some((kw) => lower.includes(kw))) {
+    if (keywords.some(kw => lower.includes(kw))) {
       return intent
     }
   }
-  return "unknown"
+  return 'unknown'
 }
 
 // 🔢 Number words up to 300
@@ -53,11 +73,11 @@ const numberWords = {
   seventy: 70,
   eighty: 80,
   ninety: 90,
-  hundred: 100,
+  hundred: 100
 }
 
-function wordsToNumber(str) {
-  str = str.toLowerCase().replace(/-/g, " ").replace(/ and /g, " ")
+function wordsToNumber (str) {
+  str = str.toLowerCase().replace(/-/g, ' ').replace(/ and /g, ' ')
   const parts = str.split(/\s+/)
   let total = 0,
     current = 0
@@ -77,31 +97,31 @@ function wordsToNumber(str) {
 }
 
 // 🧺 Normalize item names
-function normalizeItemName(name) {
+function normalizeItemName (name) {
   name = name.toLowerCase()
   const map = {
-    shirt: "shirts",
-    trouser: "trousers",
-    short: "shorts",
-    jean: "jeans",
-    dress: "dresses",
-    towel: "towels",
-    bedspread: "bedspreads",
-    bedsheet: "bedsheets",
-    pillow: "pillowcases",
-    pillowcase: "pillowcases",
-    "pillow case": "pillowcases",
-    pillowcases: "pillowcases",
-    curtain: "curtains",
-    suit: "suits",
-    skirt: "skirts",
-    blouse: "blouses",
-    jacket: "jackets",
-    sweater: "sweaters",
-    blanket: "blankets",
+    shirt: 'shirts',
+    trouser: 'trousers',
+    short: 'shorts',
+    jean: 'jeans',
+    dress: 'dresses',
+    towel: 'towels',
+    bedspread: 'bedspreads',
+    bedsheet: 'bedsheets',
+    pillow: 'pillowcases',
+    pillowcase: 'pillowcases',
+    'pillow case': 'pillowcases',
+    pillowcases: 'pillowcases',
+    curtain: 'curtains',
+    suit: 'suits',
+    skirt: 'skirts',
+    blouse: 'blouses',
+    jacket: 'jackets',
+    sweater: 'sweaters',
+    blanket: 'blankets'
   }
   if (map[name]) return map[name]
-  if (!name.endsWith("s")) return name + "s"
+  if (!name.endsWith('s')) return name + 's'
   return name
 }
 
@@ -117,25 +137,25 @@ const wordRegex = new RegExp(
       eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|
       twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety))*)\\s+
       (shirts?|trousers?|shorts?|jeans?|dresses?|towels?|bedspreads?|bedsheets?|pillow\\s?cases?|curtains?|suits?|skirts?|blouses?|jackets?|sweaters?|blankets?)`,
-  "i"
+  'i'
 )
 
 // 🧺 Parse a single part → item
-function parseItemPart(part) {
+function parseItemPart (part) {
   part = part.toLowerCase().trim()
-  let service = "washIron" // default
+  let service = 'washIron' // default
   let name = part
 
   // 🔹 Detect service
   if (/iron only/.test(part)) {
-    service = "ironOnly"
-    name = part.replace(/iron only/, "").trim()
+    service = 'ironOnly'
+    name = part.replace(/iron only/, '').trim()
   } else if (/wash and fold/.test(part)) {
-    service = "washFold"
-    name = part.replace(/wash and fold/, "").trim()
+    service = 'washFold'
+    name = part.replace(/wash and fold/, '').trim()
   } else if (/wash and iron|wash & iron|laundry/.test(part)) {
-    service = "washIron"
-    name = part.replace(/wash (and|&) iron|laundry/, "").trim()
+    service = 'washIron'
+    name = part.replace(/wash (and|&) iron|laundry/, '').trim()
   }
 
   // 🔹 Detect quantity
@@ -162,7 +182,7 @@ function parseItemPart(part) {
 /**
  * 🔹 Parse laundry orders
  */
-export async function parseOrderIntent(message) {
+export async function parseOrderIntent (message) {
   try {
     // 👉 Try AI extraction first
     const prompt = `Extract structured laundry order details from this request:
@@ -180,14 +200,14 @@ Return JSON with:
 }`
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0,
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0
     })
 
     return JSON.parse(completion.choices[0].message.content)
   } catch (err) {
-    console.error("❌ parseOrderIntent AI failed:", err.message)
+    console.error('❌ parseOrderIntent AI failed:', err.message)
 
     // 👉 Fallback
     const items = []
@@ -202,16 +222,17 @@ Return JSON with:
     }
 
     // 🔹 Turnaround detection
-    let turnaround = "standard"
-    if (/\b(express|24h|24 hours|next day)\b/.test(lower)) turnaround = "express"
+    let turnaround = 'standard'
+    if (/\b(express|24h|24 hours|next day)\b/.test(lower))
+      turnaround = 'express'
     if (/\b(same day|today|urgent|6h|6-8 hours)\b/.test(lower))
-      turnaround = "same-day"
+      turnaround = 'same-day'
 
     // 🔹 Delivery detection
-    let delivery = "none"
-    if (/pickup/.test(lower)) delivery = "pickup"
+    let delivery = 'none'
+    if (/pickup/.test(lower)) delivery = 'pickup'
     if (/(deliver|home delivery|send to my house)/.test(lower))
-      delivery = "delivery"
+      delivery = 'delivery'
 
     // 🔹 Distance
     let distanceKm = null
@@ -219,39 +240,46 @@ Return JSON with:
     if (distanceMatch) distanceKm = parseInt(distanceMatch[1], 10)
 
     // 🔹 Payment
-    let payment = "unspecified"
-    if (/cash/.test(lower)) payment = "cash"
-    if (/card/.test(lower)) payment = "card"
-    if (/transfer/.test(lower)) payment = "transfer"
+    let payment = 'unspecified'
+    if (/cash/.test(lower)) payment = 'cash'
+    if (/card/.test(lower)) payment = 'card'
+    if (/transfer/.test(lower)) payment = 'transfer'
 
-    return { items, turnaround, distanceKm, delivery, payment, instructions: "" }
+    return {
+      items,
+      turnaround,
+      distanceKm,
+      delivery,
+      payment,
+      instructions: ''
+    }
   }
 }
 
 /**
  * 🔹 Conversational AI with memory
  */
-export async function processUserMessage(userId, userMessage) {
+export async function processUserMessage (userId, userMessage) {
   const history = await Message.find({ userId })
     .sort({ createdAt: -1 })
     .limit(10)
     .lean()
 
-  const chatHistory = history.reverse().map((m) => ({
-    role: m.from === "bot" ? "assistant" : "user",
-    content: m.text,
+  const chatHistory = history.reverse().map(m => ({
+    role: m.from === 'bot' ? 'assistant' : 'user',
+    content: m.text
   }))
 
   const res = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: 'gpt-4o-mini',
     messages: [
       {
-        role: "system",
-        content: "You are CHUVI, a friendly laundry assistant chatbot.",
+        role: 'system',
+        content: 'You are CHUVI, a friendly laundry assistant chatbot.'
       },
       ...chatHistory,
-      { role: "user", content: userMessage },
-    ],
+      { role: 'user', content: userMessage }
+    ]
   })
 
   return res.choices[0].message.content
