@@ -201,6 +201,7 @@ Return JSON with:
 
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
+      response_format: { type: 'json' },
       messages: [{ role: 'user', content: prompt }],
       temperature: 0
     })
