@@ -35,7 +35,7 @@ async function markMessageAsRead (messageId) {
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
           'Content-Type': 'application/json'
         }
       }
