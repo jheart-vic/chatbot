@@ -106,6 +106,7 @@ export const handleIncomingMessage = async (
 
     // Save message early to prevent reprocessing on retries
     await Message.create({
+      userId: user._id,
       from: 'user',
       externalId: messageId,
       text
@@ -456,6 +457,9 @@ We'll keep you updated on the progress.`
     res.status(200).end()
   } catch (err) {
     console.error('❌ handleIncomingMessage error:', err)
-    res.sendStatus(500)
+    if (res && typeof res.sendStatus === 'function') {
+      return res.sendStatus(500)
+    }
+    return // prevent crash if res is missing
   }
 }
