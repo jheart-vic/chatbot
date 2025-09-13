@@ -344,7 +344,7 @@ export const handleIncomingMessage = async (
           delivery: parsed.delivery,
           payment: parsed.payment,
           status: 'Pending',
-          total,
+          price: total, // ✅ map total to price so validation passes
           assignedTo: await assignEmployee()
         })
 
