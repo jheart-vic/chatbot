@@ -359,7 +359,7 @@ const replyAndExit = async (to, message, res) => {
   await sendTypingIndicator(to)
   await new Promise(r => setTimeout(r, 1500)) // ⏳ Wait 1.5s for realism
   await sendWhatsAppMessage(to, message)
-  return res.sendStatus(200)
+  return
 }
 
 export const handleIncomingMessage = async (
@@ -665,6 +665,6 @@ export const handleIncomingMessage = async (
     return res.status(200).end()
   } catch (err) {
     console.error('❌ Bot Error:', err)
-    return res.sendStatus(500)
+    return
   }
 }
