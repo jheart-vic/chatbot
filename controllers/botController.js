@@ -24,6 +24,7 @@ const STATUS_EMOJIS = {
   Delivered: '🚚'
 }
 
+// --- Helper Functions ---
 async function markMessageAsRead (messageId) {
   try {
     await axios.post(
@@ -48,7 +49,7 @@ async function markMessageAsRead (messageId) {
   }
 }
 
-async function sendTypingIndicator( messageId) {
+async function sendTypingIndicator (messageId) {
   try {
     await axios.post(
       `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -56,7 +57,7 @@ async function sendTypingIndicator( messageId) {
         messaging_product: 'whatsapp',
         status: 'read',
         message_id: messageId,
-        typing_indicator: { type: 'text' } // <-- new syntax
+        typing_indicator: { type: 'text' }
       },
       {
         headers: {
@@ -66,25 +67,54 @@ async function sendTypingIndicator( messageId) {
       }
     )
   } catch (err) {
-    console.error('❌ Typing indicator failed:', err.response?.data || err.message)
+    console.error(
+      '❌ Typing indicator failed:',
+      err.response?.data || err.message
+    )
   }
 }
 
-
+// --- Safe reply helper ---
 const replyAndExit = async (to, message, res, messageId) => {
-  await markMessageAsRead(messageId)
-  await new Promise(r => setTimeout(r, 1500))
-  await sendWhatsAppMessage(to, message)
-  return res.status(200).end()
+  try {
+    if (messageId) await markMessageAsRead(messageId)
+    await new Promise(r => setTimeout(r, 1500)) // small delay for natural feel
+    await sendWhatsAppMessage(to, message)
+  } catch (err) {
+    console.error('❌ replyAndExit failed:', err.message)
+  } finally {
+    if (res && typeof res.status === 'function') {
+      return res.status(200).end()
+    } else {
+      console.warn('⚠️ No res object provided to replyAndExit')
+    }
+  }
 }
 
+// --- Main Handler ---
 export const handleIncomingMessage = async (
   { from, text, profile, messageId },
   res
 ) => {
   try {
+    // ✅ Deduplicate incoming messages
+    const exists = await Message.findOne({ externalId: messageId })
+    if (exists) {
+      console.log(`⚠️ Duplicate message ignored: ${messageId}`)
+      return res?.status(200).end()
+    }
+
+    // Save message early to prevent reprocessing on retries
+    await Message.create({
+      from: 'user',
+      externalId: messageId,
+      text
+    })
+
     await markMessageAsRead(messageId)
     await sendTypingIndicator(messageId)
+
+    // --- Ensure User exists ---
     let user = await User.findOne({ phone: from })
     if (!user) {
       user = await User.create({
@@ -102,7 +132,7 @@ export const handleIncomingMessage = async (
 
     const normalized = text.trim().toLowerCase()
 
-    // Greetings
+    // --- Greetings ---
     if (
       user.isOnboarded &&
       [
@@ -124,14 +154,12 @@ export const handleIncomingMessage = async (
       )
     }
 
-    // Onboarding flow
+    // --- Onboarding Flow ---
     if (!user.isOnboarded) {
       const step = user.conversationState?.step
-
       if (!step) {
         user.conversationState = { step: 'awaiting_name' }
         await user.save()
-
         return replyAndExit(
           from,
           '👋 Welcome! Please tell me your *full name* to get started.',
@@ -139,12 +167,10 @@ export const handleIncomingMessage = async (
           messageId
         )
       }
-
       if (step === 'awaiting_name') {
         user.fullName = text.trim() || user.whatsappName
         user.conversationState = { step: 'awaiting_address' }
         await user.save()
-
         return replyAndExit(
           from,
           `📍 Thanks ${user.fullName}! Now send me your *address*.`,
@@ -152,7 +178,6 @@ export const handleIncomingMessage = async (
           messageId
         )
       }
-
       if (step === 'awaiting_address') {
         user.address = text.trim()
         user.conversationState = { step: 'awaiting_preferences' }
@@ -164,7 +189,6 @@ export const handleIncomingMessage = async (
           messageId
         )
       }
-
       if (step === 'awaiting_preferences') {
         user.preferences = { fragrance: text.trim() || '' }
         user.isOnboarded = true
@@ -179,9 +203,10 @@ export const handleIncomingMessage = async (
       }
     }
 
-    // Handle any active conversation steps (multi-step orders)
+    // --- Multi-step Order Flow ---
     if (user.conversationState?.step) {
       const state = user.conversationState
+      const fakeMessageId = `${messageId}-internal-${Date.now()}` // ✅ prevents duplicate detection
 
       if (state.step === 'awaiting_items') {
         const parsedItems = await parseOrderIntent(text)
@@ -189,8 +214,8 @@ export const handleIncomingMessage = async (
         state.step = null
         user.conversationState = state
         await user.save()
-        return await handleIncomingMessage(
-          { from, text: 'continue order', profile, messageId },
+        return handleIncomingMessage(
+          { from, text: 'continue order', profile, messageId: fakeMessageId },
           res
         )
       }
@@ -204,8 +229,8 @@ export const handleIncomingMessage = async (
         state.step = null
         user.conversationState = state
         await user.save()
-        return await handleIncomingMessage(
-          { from, text: 'continue order', profile, messageId },
+        return handleIncomingMessage(
+          { from, text: 'continue order', profile, messageId: fakeMessageId },
           res
         )
       }
@@ -216,8 +241,8 @@ export const handleIncomingMessage = async (
         state.step = null
         user.conversationState = state
         await user.save()
-        return await handleIncomingMessage(
-          { from, text: 'continue order', profile, messageId },
+        return handleIncomingMessage(
+          { from, text: 'continue order', profile, messageId: fakeMessageId },
           res
         )
       }
@@ -236,20 +261,12 @@ export const handleIncomingMessage = async (
         state.step = null
         user.conversationState = state
         await user.save()
-        return await handleIncomingMessage(
-          { from, text: 'continue order', profile, messageId },
+        return handleIncomingMessage(
+          { from, text: 'continue order', profile, messageId: fakeMessageId },
           res
         )
       }
     }
-
-    // Save user message
-    await Message.create({
-      userId: user._id,
-      from: 'user',
-      text,
-      externalId: messageId
-    })
 
     // Detect intent
     const intent = detectIntent(text)
