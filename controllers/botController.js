@@ -104,6 +104,7 @@ export const handleIncomingMessage = async (
       return res?.status(200).end()
     }
 
+    let user = await User.findOne({ phone: from })
     // Save message early to prevent reprocessing on retries
     await Message.create({
       userId: user._id,
@@ -116,7 +117,6 @@ export const handleIncomingMessage = async (
     await sendTypingIndicator(messageId)
 
     // --- Ensure User exists ---
-    let user = await User.findOne({ phone: from })
     if (!user) {
       user = await User.create({
         phone: from,
