@@ -23,7 +23,15 @@ const keywordIntents = {
   ],
   track_order: ['track', 'status', 'where', 'progress'],
   check_loyalty: ['points', 'loyalty', 'rewards'],
-  greeting: ['hi', 'hello', 'hey', 'good morning', 'good evening'],
+  greeting: ['hi', 'hello', 'hey', 'good morning', 'good evening', 'good afternoon'],
+  farewell: ['bye', 'goodbye', 'see you', 'later', 'thanks', 'thank you'],
+  my_order: [
+    'my order',
+    'previous order',
+    'last order',
+    'recent order',
+    'show my orders'
+  ],
   update_preferences: [
     'fragrance',
     'preference',
