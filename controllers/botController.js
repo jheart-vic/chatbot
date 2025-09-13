@@ -48,30 +48,28 @@ async function markMessageAsRead (messageId) {
   }
 }
 
-async function sendTypingIndicator (to) {
+async function sendTypingIndicator( messageId) {
   try {
     await axios.post(
       `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: 'whatsapp',
-        to,
-        type: 'action',
-        action: { typing: 'typing_on' }
+        status: 'read',
+        message_id: messageId,
+        typing_indicator: { type: 'text' } // <-- new syntax
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`
+          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
         }
       }
     )
   } catch (err) {
-    // If unsupported in your API version this will fail — we log and continue
-    console.error(
-      '❌ Typing indicator failed:',
-      err.response?.data || err.message
-    )
+    console.error('❌ Typing indicator failed:', err.response?.data || err.message)
   }
 }
+
 
 const replyAndExit = async (to, message, res, messageId) => {
   await markMessageAsRead(messageId)
@@ -85,8 +83,8 @@ export const handleIncomingMessage = async (
   res
 ) => {
   try {
-    // await markMessageAsRead(messageId)
-    await sendTypingIndicator(from)
+    await markMessageAsRead(messageId)
+    await sendTypingIndicator(messageId)
     let user = await User.findOne({ phone: from })
     if (!user) {
       user = await User.create({
