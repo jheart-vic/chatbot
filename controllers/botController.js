@@ -315,10 +315,12 @@ import { sendWhatsAppMessage } from '../helpers/whatsApp.js'
 import User from '../models/User.js'
 import Order from '../models/Order.js'
 import Message from '../models/Message.js'
+import dotenv from 'dotenv'
 import { DateTime } from 'luxon'
 import { calculatePrice } from '../helpers/pricing.js'
 import { assignEmployee } from '../helpers/employeeAssignment.js'
 
+dotenv.config()
 const STATUS_EMOJIS = {
   Pending: '⏳',
   'In Wash': '🧺',
@@ -341,7 +343,7 @@ async function sendTypingIndicator (to) {
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
           'Content-Type': 'application/json'
         }
       }
