@@ -104,14 +104,7 @@ export const handleIncomingMessage = async (
       return res?.status(200).end()
     }
 
-    let user = await User.findOne({ phone: from })
-    // Save message early to prevent reprocessing on retries
-    await Message.create({
-      userId: user._id,
-      from: 'user',
-      externalId: messageId,
-      text
-    })
+
 
     await markMessageAsRead(messageId)
     await sendTypingIndicator(messageId)
@@ -131,6 +124,15 @@ export const handleIncomingMessage = async (
       })
     }
 
+   let user = await User.findOne({ phone: from })
+    // Save message early to prevent reprocessing on retries
+    await Message.create({
+      userId: user._id,
+      from: 'user',
+      externalId: messageId,
+      text
+    })
+    console.log(`📩 Message from ${user.phone}: ${text}`)
     const normalized = text.trim().toLowerCase()
 
     // --- Greetings ---
@@ -573,7 +575,7 @@ export const handleIncomingMessage = async (
               payment: parsed.payment,
               status: 'Pending',
               price: finalTotal,
-              loyaltyRedeemed: pointsUsed, // ✅ store used points
+              loyaltyRedeemed: pointsUsed,
               loyaltyEarned: Math.floor(finalTotal / 1000) * 10,
               assignedTo: await assignEmployee()
             })
@@ -585,6 +587,7 @@ export const handleIncomingMessage = async (
             user.conversationState = {}
             await user.save()
 
+            // ✅ Dynamic success message (no hardcoded items)
             botReply = `✅ Your order has been placed!
 
 🧺 Items: ${pricedItems
@@ -601,15 +604,10 @@ export const handleIncomingMessage = async (
             if (warnings.length) {
               botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
             }
-          } else {
-            // ❌ User cancelled
-            user.conversationState = {}
-            await user.save()
-            botReply = '❌ Order cancelled. You can start a new order anytime.'
-          }
-          break
-        }
 
+            break // ✅ prevent falling through
+          }
+        }
         // STEP 3️⃣: Normal parsing flow (items, turnaround, distance, etc.)
         const parsed =
           user.conversationState?.tempOrder || (await parseOrderIntent(text))
