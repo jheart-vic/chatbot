@@ -43,14 +43,27 @@ const keywordIntents = {
 }
 
 export const detectIntent = text => {
-  const lower = text.toLowerCase()
-  for (const [intent, keywords] of Object.entries(keywordIntents)) {
-    if (keywords.some(kw => lower.includes(kw))) {
+  const lower = text.toLowerCase().replace(/[_-]+/g, ' ')
+
+  const priorityOrder = [
+    'track_order',
+    'my_order',
+    'check_loyalty',
+    'update_preferences',
+    'farewell',
+    'greeting',
+    'create_order'
+  ]
+
+  for (const intent of priorityOrder) {
+    if (keywordIntents[intent].some(kw => lower.includes(kw))) {
       return intent
     }
   }
+
   return 'unknown'
 }
+
 
 // 🔢 Number words up to 300
 const numberWords = {

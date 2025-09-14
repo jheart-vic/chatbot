@@ -349,6 +349,8 @@ export const handleIncomingMessage = async (
         })
 
         user.totalOrders += 1
+user.conversationState = {}
+        user.loyaltyBalance += order.loyaltyEarned || 0
         await user.save()
 
         botReply = `✅ Your order has been placed!
