@@ -19,6 +19,15 @@ const orderSchema = new mongoose.Schema(
       },
     ],
 
+   // 🆕 Order meta
+    turnaround: {
+      type: String,
+      enum: ["standard", "express", "same-day"],
+      default: "standard",
+    },
+    distanceKm: { type: Number, default: 0 },
+    delivery: { type: String }, // e.g. "pickup" or "doorstep"
+    payment: { type: String },  // e.g. "cash", "card", "transfer"
     status: {
       type: String,
       enum: ["Pending", "In Wash", "Ironing", "Packaging", "Ready", "Delivered"],

@@ -328,6 +328,46 @@ export const handleIncomingMessage = async (
     //           warnings
     //         } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
 
+    // if (
+    //           user.loyaltyBalance > 0 &&
+    //           user.conversationState?.step !== 'awaiting_points_confirm'
+    //         ) {
+    //           user.conversationState = {
+    //             step: 'awaiting_points_confirm',
+    //             tempOrder: parsed,
+    //             tempPrice: { pricedItems, subtotal, deliveryFee, baseTotal }
+    //           }
+    //           await user.save()
+
+    //           botReply =
+    //             `🌟 You have *${user.loyaltyBalance} loyalty points* (₦${user.loyaltyBalance}).\n` +
+    //             `Would you like to use them for this order?\nReply with *yes* or *no*.`
+    //           break
+    //         }
+
+    //         let total = baseTotal
+    //         let pointsUsed = 0
+
+    //         // ✅ STEP 2: Process user response to yes/no
+    //         if (user.conversationState?.step === 'awaiting_points_confirm') {
+    //           const lower = text.toLowerCase()
+    //           parsed = user.conversationState.tempOrder
+    //           ;({ pricedItems, subtotal, deliveryFee, baseTotal } =
+    //             user.conversationState.tempPrice)
+
+    //           if (/^(yes|y|sure|ok|yeah|use)$/i.test(lower)) {
+    //             pointsUsed = Math.min(user.loyaltyBalance, baseTotal)
+    //             total = baseTotal - pointsUsed
+    //             user.loyaltyBalance -= pointsUsed
+    //           } else {
+    //             // User said "no" or something else → just continue without points
+    //             total = baseTotal
+    //           }
+
+    //           user.conversationState = {} // clear state regardless of answer
+    //         }
+
+    //         // 🕒 Calculate due date
     //         let now = DateTime.now().setZone('Africa/Lagos')
     //         let dueDate =
     //           parsed.turnaround === 'express'
@@ -344,13 +384,16 @@ export const handleIncomingMessage = async (
     //           delivery: parsed.delivery,
     //           payment: parsed.payment,
     //           status: 'Pending',
-    //           price: total, // ✅ map total to price so validation passes
-    //           assignedTo: await assignEmployee()
+    //           price: total,
+    //           assignedTo: await assignEmployee(),
+    //           loyaltyEarned: Math.floor(total / 1000) * 10,
+    //           loyaltyRedeemed: pointsUsed
     //         })
 
+    //         // 👤 Update user stats
     //         user.totalOrders += 1
-    // user.conversationState = {}
-    //         user.loyaltyBalance += order.loyaltyEarned || 0
+    //         user.loyaltyBalance = user.loyaltyBalance - pointsUsed + (order.loyaltyEarned || 0)
+    //         user.conversationState = {}
     //         await user.save()
 
     //         botReply = `✅ Your order has been placed!
@@ -455,7 +498,120 @@ export const handleIncomingMessage = async (
     //     }
     switch (intent) {
       case 'create_order': {
-        let parsed =
+        // STEP 1️⃣: Handle points confirmation step first
+        if (user.conversationState?.step === 'awaiting_points_confirm') {
+          const parsed = user.conversationState.tempOrder
+          const {
+            items: pricedItems,
+            subtotal,
+            deliveryFee,
+            total,
+            warnings
+          } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
+
+          let pointsUsed = 0
+          if (/^(yes|y|use|sure|ok)$/i.test(text)) {
+            pointsUsed = Math.min(user.loyaltyBalance, total)
+          }
+
+          // Move to order confirmation step, storing pointsUsed for next step
+          user.conversationState = {
+            step: 'awaiting_order_confirm',
+            tempOrder: parsed,
+            pointsUsed
+          }
+          await user.save()
+
+          botReply = `🧾 Here's your updated order summary:
+
+🧺 Items: ${pricedItems
+            .map(i => `${i.quantity} ${i.name} (${i.service})`)
+            .join(', ')}
+💵 Subtotal: ₦${subtotal}
+🚚 Delivery fee: ₦${deliveryFee}
+🎁 Points used: ₦${pointsUsed}
+💰 Total: ₦${total - pointsUsed}
+
+✅ Confirm order? (yes/no)`
+
+          if (warnings.length) {
+            botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
+          }
+          break
+        }
+
+        // STEP 2️⃣: Handle order confirmation step
+        if (user.conversationState?.step === 'awaiting_order_confirm') {
+          const parsed = user.conversationState.tempOrder
+          const pointsUsed = user.conversationState.pointsUsed || 0
+          const {
+            items: pricedItems,
+            subtotal,
+            deliveryFee,
+            total,
+            warnings
+          } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
+
+          if (/^yes$/i.test(text)) {
+            // 🏷 Final total after points
+            const finalTotal = Math.max(total - pointsUsed, 0)
+
+            let now = DateTime.now().setZone('Africa/Lagos')
+            let dueDate =
+              parsed.turnaround === 'express'
+                ? now.plus({ hours: 24 })
+                : parsed.turnaround === 'same-day'
+                ? now.plus({ hours: 8 })
+                : now.plus({ days: 2 })
+
+            const order = await Order.create({
+              userId: user._id,
+              items: pricedItems,
+              turnaround: parsed.turnaround,
+              distanceKm: parsed.distanceKm,
+              delivery: parsed.delivery,
+              payment: parsed.payment,
+              status: 'Pending',
+              price: finalTotal,
+              loyaltyRedeemed: pointsUsed, // ✅ store used points
+              loyaltyEarned: Math.floor(finalTotal / 1000) * 10,
+              assignedTo: await assignEmployee()
+            })
+
+            // 👤 Update user once
+            user.loyaltyBalance =
+              user.loyaltyBalance - pointsUsed + order.loyaltyEarned
+            user.totalOrders += 1
+            user.conversationState = {}
+            await user.save()
+
+            botReply = `✅ Your order has been placed!
+
+🧺 Items: ${pricedItems
+              .map(i => `${i.quantity} ${i.name} (${i.service})`)
+              .join(', ')}
+
+💵 Subtotal: ₦${subtotal}
+🚚 Delivery fee: ₦${deliveryFee}
+🎁 Points used: ₦${pointsUsed}
+💰 Total: ₦${finalTotal}
+
+📅 Ready by: ${dueDate.toFormat('dd LLL, h:mma')}`
+
+            if (warnings.length) {
+              botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
+            }
+          } else {
+            // ❌ User cancelled
+            user.conversationState = {}
+            await user.save()
+            botReply = '❌ Order cancelled. You can start a new order anytime.'
+          }
+          break
+        }
+
+        // STEP 3️⃣: Normal parsing flow (items, turnaround, distance, etc.)
+        const parsed =
           user.conversationState?.tempOrder || (await parseOrderIntent(text))
 
         if (!parsed.items || parsed.items.length === 0) {
@@ -498,98 +654,49 @@ export const handleIncomingMessage = async (
           break
         }
 
-        // 🧮 Calculate price
-        let {
+        // STEP 4️⃣: Price calculation before asking for points
+        const {
           items: pricedItems,
           subtotal,
           deliveryFee,
-          total: baseTotal,
+          total,
           warnings
         } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
 
-        // ✅ STEP 1: Ask for points redemption if not done yet
-        if (
-          user.loyaltyBalance > 0 &&
-          user.conversationState?.step !== 'awaiting_points_confirm'
-        ) {
+        // 🎯 Ask about points (if user has some)
+        if (user.loyaltyBalance > 0) {
           user.conversationState = {
             step: 'awaiting_points_confirm',
-            tempOrder: parsed,
-            tempPrice: { pricedItems, subtotal, deliveryFee, baseTotal }
+            tempOrder: parsed
           }
           await user.save()
 
-          botReply =
-            `🌟 You have *${user.loyaltyBalance} loyalty points* (₦${user.loyaltyBalance}).\n` +
-            `Would you like to use them for this order?\nReply with *yes* or *no*.`
+          botReply = `🎁 You have ${user.loyaltyBalance} loyalty points.\nWould you like to use them for this order? (yes/no)`
           break
         }
 
-        let total = baseTotal
-        let pointsUsed = 0
-
-        // ✅ STEP 2: Process user response to yes/no
-        if (user.conversationState?.step === 'awaiting_points_confirm') {
-          const lower = text.toLowerCase()
-          parsed = user.conversationState.tempOrder
-          ;({ pricedItems, subtotal, deliveryFee, baseTotal } =
-            user.conversationState.tempPrice)
-
-          if (/^(yes|y|sure|ok|yeah|use)$/i.test(lower)) {
-            pointsUsed = Math.min(user.loyaltyBalance, baseTotal)
-            total = baseTotal - pointsUsed
-            user.loyaltyBalance -= pointsUsed
-          } else {
-            // User said "no" or something else → just continue without points
-            total = baseTotal
-          }
-
-          user.conversationState = {} // clear state regardless of answer
+        // Otherwise go straight to confirmation
+        user.conversationState = {
+          step: 'awaiting_order_confirm',
+          tempOrder: parsed,
+          pointsUsed: 0
         }
-
-        // 🕒 Calculate due date
-        let now = DateTime.now().setZone('Africa/Lagos')
-        let dueDate =
-          parsed.turnaround === 'express'
-            ? now.plus({ hours: 24 })
-            : parsed.turnaround === 'same-day'
-            ? now.plus({ hours: 8 })
-            : now.plus({ days: 2 })
-
-        const order = await Order.create({
-          userId: user._id,
-          items: pricedItems,
-          turnaround: parsed.turnaround,
-          distanceKm: parsed.distanceKm,
-          delivery: parsed.delivery,
-          payment: parsed.payment,
-          status: 'Pending',
-          price: total,
-          assignedTo: await assignEmployee(),
-          loyaltyEarned: Math.floor(total / 1000) * 10,
-          loyaltyRedeemed: pointsUsed
-        })
-
-        // 👤 Update user stats
-        user.totalOrders += 1
-        user.loyaltyBalance = user.loyaltyBalance - pointsUsed + (order.loyaltyEarned || 0)
-        user.conversationState = {}
         await user.save()
 
-        // 📝 Build reply
-        botReply = `✅ Your order has been placed!\n\n🧺 Items: ${pricedItems
-          .map(i => `${i.quantity} ${i.name} (${i.service})`)
-          .join(
-            ', '
-          )}\n\n💵 Subtotal: ₦${subtotal}\n🚚 Delivery fee: ₦${deliveryFee}\n💰 Total: ₦${total}\n\n📅 Ready by: ${dueDate.toFormat(
-          'dd LLL, h:mma'
-        )}`
+        botReply = `🧾 Here's your order summary:
 
-        if (pointsUsed > 0)
-          botReply += `\n🎁 You redeemed ${pointsUsed} points!`
-        if (order.loyaltyEarned > 0)
-          botReply += `\n⭐ You earned ${order.loyaltyEarned} loyalty points.`
-        if (warnings.length) botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
+🧺 Items: ${pricedItems
+          .map(i => `${i.quantity} ${i.name} (${i.service})`)
+          .join(', ')}
+💵 Subtotal: ₦${subtotal}
+🚚 Delivery fee: ₦${deliveryFee}
+💰 Total: ₦${total}
+
+✅ Confirm order? (yes/no)`
+
+        if (warnings.length) {
+          botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
+        }
         break
       }
 
