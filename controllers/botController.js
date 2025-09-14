@@ -275,6 +275,184 @@ export const handleIncomingMessage = async (
 
     let botReply = ''
 
+    //     switch (intent) {
+    //       case 'create_order': {
+    //         let parsed =
+    //           user.conversationState?.tempOrder || (await parseOrderIntent(text))
+
+    //         if (!parsed.items || parsed.items.length === 0) {
+    //           user.conversationState = { step: 'awaiting_items', tempOrder: parsed }
+    //           await user.save()
+    //           botReply =
+    //             "🧺 Please tell me what items you'd like me to wash. Example: *3 shirts, 2 trousers*."
+    //           break
+    //         }
+
+    //         if (!parsed.turnaround) {
+    //           user.conversationState = {
+    //             step: 'awaiting_turnaround',
+    //             tempOrder: parsed
+    //           }
+    //           await user.save()
+    //           botReply =
+    //             '⏱ How fast do you need it?\n- Standard (48h)\n- Express (24h, +40%)\n- Same-day (6–8h, +80%, ≤15 items)'
+    //           break
+    //         }
+
+    //         if (parsed.distanceKm == null) {
+    //           user.conversationState = {
+    //             step: 'awaiting_distance',
+    //             tempOrder: parsed
+    //           }
+    //           await user.save()
+    //           botReply =
+    //             '🚚 Do you need pickup/delivery? If yes, how far are you from us (in km)?\nExample: *2 km*'
+    //           break
+    //         }
+
+    //         if (parsed.items.some(i => !i.service)) {
+    //           user.conversationState = {
+    //             step: 'awaiting_service',
+    //             tempOrder: parsed
+    //           }
+    //           await user.save()
+    //           botReply = `🧺 Which service would you like for these items?\n- Wash & Iron\n- Wash & Fold\n- Iron Only`
+    //           break
+    //         }
+
+    //         const {
+    //           items: pricedItems,
+    //           subtotal,
+    //           deliveryFee,
+    //           total,
+    //           warnings
+    //         } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
+
+    //         let now = DateTime.now().setZone('Africa/Lagos')
+    //         let dueDate =
+    //           parsed.turnaround === 'express'
+    //             ? now.plus({ hours: 24 })
+    //             : parsed.turnaround === 'same-day'
+    //             ? now.plus({ hours: 8 })
+    //             : now.plus({ days: 2 })
+
+    //         const order = await Order.create({
+    //           userId: user._id,
+    //           items: pricedItems,
+    //           turnaround: parsed.turnaround,
+    //           distanceKm: parsed.distanceKm,
+    //           delivery: parsed.delivery,
+    //           payment: parsed.payment,
+    //           status: 'Pending',
+    //           price: total, // ✅ map total to price so validation passes
+    //           assignedTo: await assignEmployee()
+    //         })
+
+    //         user.totalOrders += 1
+    // user.conversationState = {}
+    //         user.loyaltyBalance += order.loyaltyEarned || 0
+    //         await user.save()
+
+    //         botReply = `✅ Your order has been placed!
+
+    // 🧺 Items: ${pricedItems
+    //           .map(i => `${i.quantity} ${i.name} (${i.service})`)
+    //           .join(', ')}
+
+    // 💵 Subtotal: ₦${subtotal}
+    // 🚚 Delivery fee: ₦${deliveryFee}
+    // 💰 Total: ₦${total}
+
+    // 📅 Ready by: ${dueDate.toFormat('dd LLL, h:mma')}
+
+    // We'll keep you updated on the progress.`
+
+    //         if (warnings.length) {
+    //           botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
+    //         }
+    //         break
+    //       }
+
+    //       case 'track_order': {
+    //         const lastOrder = await Order.findOne({ userId: user._id }).sort({
+    //           createdAt: -1
+    //         })
+    //         if (!lastOrder) {
+    //           botReply = "📦 You don't have any orders yet."
+    //         } else {
+    //           botReply = `📦 Your last order is currently: ${
+    //             STATUS_EMOJIS[lastOrder.status]
+    //           } ${lastOrder.status}`
+    //         }
+    //         break
+    //       }
+
+    //       case 'check_loyalty': {
+    //         botReply = `🌟 You currently have *${user.loyaltyBalance} loyalty points*. Earn points with every order!`
+    //         break
+    //       }
+
+    //       case 'update_preferences': {
+    //         const lower = text.toLowerCase()
+    //         const newPrefs = { ...user.preferences }
+
+    //         if (lower.includes('fragrance')) {
+    //           const match = lower.match(/fragrance\s*(?:to|=)?\s*([a-z]+)/)
+    //           if (match) newPrefs.fragrance = match[1]
+    //         }
+    //         if (lower.includes('fold')) newPrefs.folding = 'neatly folded'
+    //         if (lower.includes('iron')) newPrefs.ironing = 'well ironed'
+
+    //         user.preferences = newPrefs
+    //         await user.save()
+
+    //         botReply = `✅ Preferences updated!\n\n📝 Current preferences:\n${Object.entries(
+    //           newPrefs
+    //         )
+    //           .map(([k, v]) => `• ${k}: ${v}`)
+    //           .join('\n')}`
+    //         break
+    //       }
+    //       case 'my_orders': {
+    //         const orders = await Order.find({ userId: user._id })
+    //           .sort({ createdAt: -1 })
+    //           .limit(5)
+
+    //         if (!orders.length) {
+    //           botReply = "📦 You haven't placed any orders yet."
+    //           break
+    //         }
+
+    //         botReply = `🧾 Your Recent Orders:\n\n${orders
+    //           .map(
+    //             (o, i) =>
+    //               `${i + 1}. ${STATUS_EMOJIS[o.status] || '📦'} *${o._id
+    //                 .toString()
+    //                 .slice(-6)
+    //                 .toUpperCase()}*\n   • ${DateTime.fromJSDate(
+    //                 o.createdAt
+    //               ).toFormat('dd LLL yyyy')}\n   • ₦${o.total} — ${o.status}`
+    //           )
+    //           .join('\n\n')}`
+    //         break
+    //       }
+
+    //       case 'farewell': {
+    //         const farewellReplies = [
+    //           '👋 Bye! Talk to you soon.',
+    //           '😊 Thanks for chatting with us. Have a great day!',
+    //           '🙌 See you later!',
+    //           "💙 Thank you! We'll be here when you need us again."
+    //         ]
+    //         botReply =
+    //           farewellReplies[Math.floor(Math.random() * farewellReplies.length)]
+    //         break
+    //       }
+
+    //       default: {
+    //         botReply = await processUserMessage(user._id, text)
+    //       }
+    //     }
     switch (intent) {
       case 'create_order': {
         let parsed =
@@ -320,14 +498,56 @@ export const handleIncomingMessage = async (
           break
         }
 
-        const {
+        // 🧮 Calculate price
+        let {
           items: pricedItems,
           subtotal,
           deliveryFee,
-          total,
+          total: baseTotal,
           warnings
         } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
 
+        // ✅ STEP 1: Ask for points redemption if not done yet
+        if (
+          user.loyaltyBalance > 0 &&
+          user.conversationState?.step !== 'awaiting_points_confirm'
+        ) {
+          user.conversationState = {
+            step: 'awaiting_points_confirm',
+            tempOrder: parsed,
+            tempPrice: { pricedItems, subtotal, deliveryFee, baseTotal }
+          }
+          await user.save()
+
+          botReply =
+            `🌟 You have *${user.loyaltyBalance} loyalty points* (₦${user.loyaltyBalance}).\n` +
+            `Would you like to use them for this order?\nReply with *yes* or *no*.`
+          break
+        }
+
+        let total = baseTotal
+        let pointsUsed = 0
+
+        // ✅ STEP 2: Process user response to yes/no
+        if (user.conversationState?.step === 'awaiting_points_confirm') {
+          const lower = text.toLowerCase()
+          parsed = user.conversationState.tempOrder
+          ;({ pricedItems, subtotal, deliveryFee, baseTotal } =
+            user.conversationState.tempPrice)
+
+          if (/^(yes|y|sure|ok|yeah|use)$/i.test(lower)) {
+            pointsUsed = Math.min(user.loyaltyBalance, baseTotal)
+            total = baseTotal - pointsUsed
+            user.loyaltyBalance -= pointsUsed
+          } else {
+            // User said "no" or something else → just continue without points
+            total = baseTotal
+          }
+
+          user.conversationState = {} // clear state regardless of answer
+        }
+
+        // 🕒 Calculate due date
         let now = DateTime.now().setZone('Africa/Lagos')
         let dueDate =
           parsed.turnaround === 'express'
@@ -344,32 +564,32 @@ export const handleIncomingMessage = async (
           delivery: parsed.delivery,
           payment: parsed.payment,
           status: 'Pending',
-          price: total, // ✅ map total to price so validation passes
-          assignedTo: await assignEmployee()
+          price: total,
+          assignedTo: await assignEmployee(),
+          loyaltyEarned: Math.floor(total / 1000) * 10,
+          loyaltyRedeemed: pointsUsed
         })
 
+        // 👤 Update user stats
         user.totalOrders += 1
-user.conversationState = {}
-        user.loyaltyBalance += order.loyaltyEarned || 0
+        user.loyaltyBalance = user.loyaltyBalance - pointsUsed + (order.loyaltyEarned || 0)
+        user.conversationState = {}
         await user.save()
 
-        botReply = `✅ Your order has been placed!
-
-🧺 Items: ${pricedItems
+        // 📝 Build reply
+        botReply = `✅ Your order has been placed!\n\n🧺 Items: ${pricedItems
           .map(i => `${i.quantity} ${i.name} (${i.service})`)
-          .join(', ')}
+          .join(
+            ', '
+          )}\n\n💵 Subtotal: ₦${subtotal}\n🚚 Delivery fee: ₦${deliveryFee}\n💰 Total: ₦${total}\n\n📅 Ready by: ${dueDate.toFormat(
+          'dd LLL, h:mma'
+        )}`
 
-💵 Subtotal: ₦${subtotal}
-🚚 Delivery fee: ₦${deliveryFee}
-💰 Total: ₦${total}
-
-📅 Ready by: ${dueDate.toFormat('dd LLL, h:mma')}
-
-We'll keep you updated on the progress.`
-
-        if (warnings.length) {
-          botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
-        }
+        if (pointsUsed > 0)
+          botReply += `\n🎁 You redeemed ${pointsUsed} points!`
+        if (order.loyaltyEarned > 0)
+          botReply += `\n⭐ You earned ${order.loyaltyEarned} loyalty points.`
+        if (warnings.length) botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
         break
       }
 
@@ -388,7 +608,8 @@ We'll keep you updated on the progress.`
       }
 
       case 'check_loyalty': {
-        botReply = `🌟 You currently have *${user.loyaltyBalance} loyalty points*. Earn points with every order!`
+        botReply = `🌟 You currently have *${user.loyaltyBalance} loyalty points*.
+You can type *"use points"* during your next order to get a discount.`
         break
       }
 
@@ -413,6 +634,7 @@ We'll keep you updated on the progress.`
           .join('\n')}`
         break
       }
+
       case 'my_orders': {
         const orders = await Order.find({ userId: user._id })
           .sort({ createdAt: -1 })
@@ -424,15 +646,22 @@ We'll keep you updated on the progress.`
         }
 
         botReply = `🧾 Your Recent Orders:\n\n${orders
-          .map(
-            (o, i) =>
-              `${i + 1}. ${STATUS_EMOJIS[o.status] || '📦'} *${o._id
-                .toString()
-                .slice(-6)
-                .toUpperCase()}*\n   • ${DateTime.fromJSDate(
-                o.createdAt
-              ).toFormat('dd LLL yyyy')}\n   • ₦${o.total} — ${o.status}`
-          )
+          .map((o, i) => {
+            const redeemed =
+              o.loyaltyRedeemed > 0 ? `🎁 Redeemed: ₦${o.loyaltyRedeemed}` : ''
+            const earned =
+              o.loyaltyEarned > 0 ? `⭐ Earned: ${o.loyaltyEarned} pts` : ''
+            const extras = [redeemed, earned].filter(Boolean).join(' | ') // join with separator if both exist
+
+            return `${i + 1}. ${STATUS_EMOJIS[o.status] || '📦'} *${o._id
+              .toString()
+              .slice(-6)
+              .toUpperCase()}*\n   • ${DateTime.fromJSDate(
+              o.createdAt
+            ).toFormat('dd LLL yyyy')}\n   • ₦${o.price} — ${o.status}${
+              extras ? `\n   • ${extras}` : ''
+            }`
+          })
           .join('\n\n')}`
         break
       }
