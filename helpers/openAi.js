@@ -521,9 +521,10 @@ function smartSplitItems (text) {
  * - returns an ARRAY of { name, quantity, service }
  */
 export function parseItemPartFallback (userText) {
-  const text = userText.toLowerCase()
+  if (!userText || typeof userText !== 'string') return []
 
-  // item classification
+  const text = userText.toLowerCase().trim()
+
   const ironables = [
     'shirt',
     'shirts',
@@ -549,11 +550,10 @@ export function parseItemPartFallback (userText) {
     'sweaters',
     'jacket',
     'jackets',
-    'short',
-    'shorts',
     'bedsheet',
     'bedsheets'
   ]
+
   const nonIronables = [
     'duvet',
     'duvets',
@@ -593,52 +593,59 @@ export function parseItemPartFallback (userText) {
     return 'wash'
   }
 
+  // Split into logical clauses without breaking "wash and fold"
   const clauses = smartSplitItems(text)
   const items = []
 
   for (let clause of clauses) {
-    const serviceHint = {
-      wash: hasWash(clause),
-      iron: hasIron(clause),
-      fold: hasFold(clause)
-    }
+    const words = clause.split(/\s+/)
+    let i = 0
+    while (i < words.length) {
+      let word = words[i]
+      if (ignoreWords.includes(word)) {
+        i++
+        continue
+      }
 
-    const withQty = [...clause.matchAll(/(\d+)\s+([a-zA-Z]+)/g)]
-    const singles = [...clause.matchAll(/\b([a-zA-Z]+)\b/g)]
+      // Determine quantity
+      let quantity = 1
+      if (numberWords[word]) {
+        quantity = numberWords[word]
+        i++
+        word = words[i] || 'item'
+      } else if (/^\d+$/.test(word)) {
+        quantity = parseInt(word, 10)
+        i++
+        word = words[i] || 'item'
+      }
 
-    const determineService = name => {
+      const name = normalizeItemName(word)
+
+      // Determine service
       let service = defaultService(name)
+      const serviceHint = {
+        wash: hasWash(clause),
+        iron: hasIron(clause),
+        fold: hasFold(clause)
+      }
       if (serviceHint.wash && serviceHint.iron) service = 'washIron'
       else if (serviceHint.wash && serviceHint.fold) service = 'washFold'
       else if (serviceHint.iron && !serviceHint.wash) service = 'ironOnly'
       else if (serviceHint.fold && !serviceHint.wash) service = 'foldOnly'
       else if (serviceHint.wash) {
-        if (ironables.includes(name)) service = 'washIron'
-        else if (nonIronables.includes(name)) service = 'washFold'
-        else service = 'wash'
+        service = ironables.includes(name)
+          ? 'washIron'
+          : nonIronables.includes(name)
+          ? 'washFold'
+          : 'wash'
       }
-      return service
-    }
 
-    if (withQty.length > 0) {
-      for (const m of withQty) {
-        const quantity = parseInt(m[1])
-        const name = m[2]
-        if (!ignoreWords.includes(name)) {
-          items.push({ name, quantity, service: determineService(name) })
-        }
-      }
-    } else {
-      for (const m of singles) {
-        const name = m[1]
-        if (!ignoreWords.includes(name)) {
-          items.push({ name, quantity: 1, service: determineService(name) })
-        }
-      }
+      items.push({ name, quantity, service })
+      i++
     }
   }
 
-  // 🧠 Merge duplicate items and upgrade services
+  // Merge duplicates and upgrade service if needed
   const merged = {}
   const rank = { wash: 1, foldOnly: 2, ironOnly: 2, washFold: 2, washIron: 3 }
   for (const item of items) {
@@ -661,6 +668,45 @@ export function parseItemPartFallback (userText) {
  * - validates the returned structure
  * - falls back to the robust regex/parser above
  */
+
+// export async function parseOrderIntent(message) {
+//   if (!message || typeof message !== 'string') {
+//     return {
+//       items: [],
+//       turnaround: 'standard',
+//       distanceKm: null,
+//       delivery: 'none',
+//       payment: 'unspecified',
+//       instructions: ''
+//     }
+//   }
+
+//   const lower = message.toLowerCase()
+
+//   const items = parseItemPartFallback(message)
+
+//   let turnaround = 'standard'
+//   if (/\b(express|24h|24 hours|next day)\b/.test(lower)) turnaround = 'express'
+//   if (/\b(same day|today|urgent|6h|6-8 hours)\b/.test(lower)) turnaround = 'same-day'
+
+//   let delivery = 'none'
+//   if (/\bpickup\b/.test(lower)) delivery = 'pickup'
+//   if (/(deliver|home delivery|send to my house)/.test(lower)) delivery = 'delivery'
+
+//   let distanceKm = null
+//   const distanceMatch = lower.match(/(\d+)\s*(km|kilomet(er|re)s?)/)
+//   if (distanceMatch) distanceKm = parseInt(distanceMatch[1], 10)
+
+//   let payment = 'unspecified'
+//   if (/\bcash\b/.test(lower)) payment = 'cash'
+//   if (/\bcard\b/.test(lower)) payment = 'card'
+//   if (/\btransfer\b/.test(lower)) payment = 'transfer'
+
+//   const instructions = ''
+
+//   return { items, turnaround, distanceKm, delivery, payment, instructions }
+// }
+
 export async function parseOrderIntent (message) {
   if (!message || typeof message !== 'string') {
     return {
@@ -673,97 +719,88 @@ export async function parseOrderIntent (message) {
     }
   }
 
-  try {
-    const prompt = `Extract structured laundry order details from this request:
+  const lower = message.toLowerCase()
 
-"${message}"
+  // 1️⃣ Try rule-based parser first
+  let items = parseItemPartFallback(message)
 
-Return JSON ONLY (no commentary) with keys:
-{
-  "items": [{ "name": "shirts", "quantity": 3, "service": "washIron" }],
-  "instructions": "",
-  "delivery": "pickup" | "delivery" | "none",
-  "payment": "cash" | "card" | "transfer" | "unspecified",
-  "turnaround": "standard" | "express" | "same-day",
-  "distanceKm": 2
-}`
+  // 2️⃣ If none found, ask OpenAI to guess items
+  if (!items || items.length === 0) {
+    try {
+      const prompt = `
+You are a laundry order assistant.
+Extract items from this text: "${message}".
 
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0
-    })
+Use this logic for 'service':
+- If item is in this ironables list: [${ironables.join(', ')}]
+    - If user said just "wash" or nothing → "washIron"
+    - If user said "wash and iron" → "washIron"
+    - If user said "iron" → "ironOnly"
+- If item is in this nonIronables list: [${nonIronables.join(', ')}]
+    - If user said just "wash" or nothing → "washFold"
+    - If user said "wash and fold" → "washFold"
+    - If user said "iron" → "ironOnly" (rare)
 
-    let parsed = completion.choices?.[0]?.message?.content
-    if (!parsed) throw new Error('Empty AI response')
+Return valid JSON like this:
+[
+  { "name": "shirts", "quantity": 3, "service": "washIron" },
+  { "name": "duvets", "quantity": 2, "service": "washFold" }
+]`
 
-    // if SDK produced an object
-    if (typeof parsed === 'object') {
-      if (!Array.isArray(parsed.items))
-        throw new Error('Invalid structure: items not array')
-      return parsed
-    }
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a helpful laundry order assistant.'
+          },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0
+      })
 
-    // string -> parse
-    parsed = JSON.parse(parsed)
-    if (!parsed || !Array.isArray(parsed.items))
-      throw new Error('Invalid AI JSON structure')
+      const raw = completion.choices[0].message.content.trim()
 
-    return parsed
-  } catch (err) {
-    console.error(
-      '❌ parseOrderIntent AI failed or returned invalid JSON:',
-      err.message
-    )
-
-    // fallback parser
-    const items = []
-    const lower = message.toLowerCase()
-    // split by comma or " and " but preserve phrases like "wash and iron" — splitting on ',| and ' is still OK here
-    const parts = message
-      .split(/,| and /i)
-      .map(p => p.trim())
-      .filter(Boolean)
-
-    for (let part of parts) {
-      const parsed = parseItemPartFallback(part)
-      if (parsed && parsed.quantity > 0 && parsed.name) items.push(parsed)
-    }
-
-    // Turnaround detection
-    let turnaround = 'standard'
-    if (/\b(express|24h|24 hours|next day)\b/.test(lower))
-      turnaround = 'express'
-    if (/\b(same day|today|urgent|6h|6-8 hours)\b/.test(lower))
-      turnaround = 'same-day'
-
-    // Delivery detection
-    let delivery = 'none'
-    if (/\bpickup\b/.test(lower)) delivery = 'pickup'
-    if (/(deliver|home delivery|send to my house)/.test(lower))
-      delivery = 'delivery'
-
-    // Distance
-    let distanceKm = null
-    const distanceMatch = lower.match(/(\d+)\s*(km|kilomet(er|re)s?)/)
-    if (distanceMatch) distanceKm = parseInt(distanceMatch[1], 10)
-
-    // Payment
-    let payment = 'unspecified'
-    if (/\bcash\b/.test(lower)) payment = 'cash'
-    if (/\bcard\b/.test(lower)) payment = 'card'
-    if (/\btransfer\b/.test(lower)) payment = 'transfer'
-
-    return {
-      items,
-      turnaround,
-      distanceKm,
-      delivery,
-      payment,
-      instructions: ''
+      try {
+        const parsed = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          items = parsed
+        }
+      } catch {
+        console.warn('AI returned non-JSON response')
+      }
+    } catch (err) {
+      console.error('AI fallback error:', err.message)
     }
   }
+
+  // 3️⃣ Detect turnaround
+  let turnaround = 'standard'
+  if (/\b(express|24h|24 hours|next day)\b/.test(lower)) turnaround = 'express'
+  if (/\b(same day|today|urgent|6h|6-8 hours)\b/.test(lower))
+    turnaround = 'same-day'
+
+  // 4️⃣ Detect delivery
+  let delivery = 'none'
+  if (/\bpickup\b/.test(lower)) delivery = 'pickup'
+  if (/(deliver|home delivery|send to my house)/.test(lower))
+    delivery = 'delivery'
+
+  // 5️⃣ Distance (optional)
+  let distanceKm = null
+  const distanceMatch = lower.match(/(\d+)\s*(km|kilomet(er|re)s?)/)
+  if (distanceMatch) distanceKm = parseInt(distanceMatch[1], 10)
+
+  // 6️⃣ Payment method
+  let payment = 'unspecified'
+  if (/\bcash\b/.test(lower)) payment = 'cash'
+  if (/\bcard\b/.test(lower)) payment = 'card'
+  if (/\btransfer\b/.test(lower)) payment = 'transfer'
+
+  // 7️⃣ Extra instructions (optional for future)
+  const instructions = ''
+
+  return { items, turnaround, distanceKm, delivery, payment, instructions }
 }
 
 /**
@@ -794,12 +831,14 @@ export async function processUserMessage (userId, userMessage) {
 
   // 4. Compose a very clear system + context message
   const contextMsg =
-    intent === 'create_order'
-      ? `User is trying to place a laundry order. Parsed items: ${JSON.stringify(
-          structuredOrder?.items || []
-        )}.
-      Ask for clarifications (pickup, delivery, turnaround) or confirm the order summary.`
-      : `User intent seems to be "${intent}". Stay in the laundry domain and give helpful, concise replies.`
+  intent === 'create_order'
+    ? `User is trying to place a laundry order. Parsed items: ${JSON.stringify(
+        structuredOrder?.items || []
+      )}.
+    Always ask the user which turnaround speed they want (standard, express, or same-day),
+    and also ask for pickup or delivery if not mentioned.
+    After collecting that info, confirm the full order summary.`
+    : `User intent seems to be "${intent}". Stay in the laundry domain and give helpful, concise replies.`
 
   // 5. Call OpenAI
   const res = await client.chat.completions.create({

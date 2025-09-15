@@ -479,19 +479,20 @@ export const handleIncomingMessage = async (
         break
       }
 
-      case 'track_order': {
-        const lastOrder = await Order.findOne({ userId: user._id }).sort({
-          createdAt: -1
-        })
-        if (!lastOrder) {
-          botReply = "📦 You don't have any orders yet."
-        } else {
-          botReply = `📦 Your last order is currently: ${
-            STATUS_EMOJIS[lastOrder.status]
-          } ${lastOrder.status}`
-        }
-        break
-      }
+     case 'track_order': {
+  const lastOrder = await Order.findOne({ userId: user._id }).sort({
+    createdAt: -1
+  })
+  if (!lastOrder) {
+    botReply = "📦 You don't have any orders yet."
+  } else {
+    const status = lastOrder.status || 'Pending' // fallback if status missing
+    const emoji = STATUS_EMOJIS[status] || '📦'
+    botReply = `📦 Your last order is currently: ${emoji} ${status}`
+  }
+  break
+}
+
 
       case 'check_loyalty': {
         botReply = `🌟 You currently have *${user.loyaltyBalance} loyalty points*.
