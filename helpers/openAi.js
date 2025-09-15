@@ -708,10 +708,14 @@ export function parseItemPartFallback (userText) {
 // }
 
 export async function parseOrderIntent (message) {
+  const turnaroundMentioned =
+    /\b(express|24h|24 hours|next day|same day|today|urgent|6h|6-8 hours)\b/.test(
+      lower
+    )
   if (!message || typeof message !== 'string') {
     return {
       items: [],
-      turnaround: 'standard',
+      turnaround: turnaroundMentioned ? detectedTurnaround : 'standard',
       distanceKm: null,
       delivery: 'none',
       payment: 'unspecified',
@@ -831,14 +835,14 @@ export async function processUserMessage (userId, userMessage) {
 
   // 4. Compose a very clear system + context message
   const contextMsg =
-  intent === 'create_order'
-    ? `User is trying to place a laundry order. Parsed items: ${JSON.stringify(
-        structuredOrder?.items || []
-      )}.
-    Always ask the user which turnaround speed they want (standard, express, or same-day),
-    and also ask for pickup or delivery if not mentioned.
-    After collecting that info, confirm the full order summary.`
-    : `User intent seems to be "${intent}". Stay in the laundry domain and give helpful, concise replies.`
+    intent === 'create_order'
+      ? `User is trying to place a laundry order. Parsed items: ${JSON.stringify(
+          structuredOrder?.items || []
+        )}.
+      Turnaround mentioned? ${structuredOrder?.turnaroundMentioned}.
+      If no turnaround is mentioned, ask them to choose one (standard, express, same-day).
+      Also ask for pickup/delivery. Then confirm the order.`
+      : `User intent seems to be "${intent}". Stay in the laundry domain and give helpful, concise replies.`
 
   // 5. Call OpenAI
   const res = await client.chat.completions.create({
