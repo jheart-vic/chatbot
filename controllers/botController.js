@@ -125,8 +125,16 @@ async function handleLinkingFlow (botUser, text) {
       } catch (err) {
         const msg = err instanceof ChuviApiError ? err.message : 'Registration failed.'
         if (/exist/i.test(msg)) {
-          await setState('link_email')
-          return `ℹ️ ${msg}\nLooks like you already have an account — let's link it instead. Please send your *email*.`
+          // The email is already registered — often from an earlier attempt where
+          // the OTP email failed. Recover by resending the code and verifying.
+          try {
+            await api.resendOtp(draft.email)
+            await setState('reg_otp')
+            return `ℹ️ *${draft.email}* is already registered — possibly from an earlier attempt.\n\n📨 I've sent a fresh verification code to that email. Send me the *OTP* to verify it.\n\n(If this is your account and it's already verified, reply *cancel* then *link account* to sign in instead.)`
+          } catch (_) {
+            await setState('link_email')
+            return `ℹ️ ${msg}\nLooks like you already have an account — let's link it instead. Please send your *email*.`
+          }
         }
         return `❌ ${msg}\nPlease try a different password (or *cancel*).`
       }

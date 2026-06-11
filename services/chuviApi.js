@@ -155,9 +155,10 @@ export class ChuviClient {
     return payload?.data ?? payload
   }
 
-  verifyOtp (email, otp) { return this.request('post', '/auth/verify-otp', { body: { email, otp } }) }
-  resendOtp (email) { return this.request('post', '/auth/resend-otp', { body: { email } }) }
-  forgotPassword (email) { return this.request('post', '/auth/forgot-password', { body: { email } }) }
+  // NOTE: backend looks users up with { email, userType } — userType is required
+  verifyOtp (email, otp) { return this.request('post', '/auth/verify-otp', { body: { email, otp, userType: 'user' } }) }
+  resendOtp (email) { return this.request('post', '/auth/resend-otp', { body: { email, userType: 'user' } }) }
+  forgotPassword (email) { return this.request('post', '/auth/forgot-password', { body: { email, userType: 'user' } }) }
 
   async unlinkLocal () {
     this.botUser.chuvi = {}
