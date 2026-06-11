@@ -17,7 +17,17 @@ const userSchema = new mongoose.Schema (
     conversationState: {
       step: {type: String, default: null},
       tempOrder: {type: Object, default: {}},
+      linkDraft: {type: Object, default: {}}, // transient data during account linking (never the password)
     },
+    // Linked Chuvi backend account/session
+    chuvi: {
+      userId: {type: String},
+      email: {type: String},
+      accessToken: {type: String},
+      refreshToken: {type: String},
+      linkedAt: {type: Date},
+    },
+    supportMode: {type: Boolean, default: false}, // true while escalated to a human agent
   },
   {timestamps: true}
 );

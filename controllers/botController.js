@@ -1,960 +1,283 @@
-// import axios from 'axios'
-// import {
-//   detectIntent,
-//   parseOrderIntent,
-//   processUserMessage
-// } from '../helpers/openAi.js'
-// import { sendWhatsAppMessage } from '../helpers/whatsApp.js'
-// import User from '../models/User.js'
-// import Order from '../models/Order.js'
-// import Message from '../models/Message.js'
-// import dotenv from 'dotenv'
-// import { DateTime } from 'luxon'
-// import { calculatePrice } from '../helpers/pricing.js'
-// import { assignEmployee } from '../helpers/employeeAssignment.js'
-
-// dotenv.config()
-
-// const STATUS_EMOJIS = {
-//   Pending: '⏳',
-//   'In Wash': '🧺',
-//   Ironing: '👔',
-//   Packaging: '🎁',
-//   Ready: '✅',
-//   Delivered: '🚚'
-// }
-
-// // --- Helper Functions ---
-// async function markMessageAsRead (messageId) {
-//   try {
-//     await axios.post(
-//       `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-//       {
-//         messaging_product: 'whatsapp',
-//         status: 'read',
-//         message_id: messageId
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     )
-//   } catch (err) {
-//     console.error(
-//       '❌ Failed to mark message as read:',
-//       err.response?.data || err.message
-//     )
-//   }
-// }
-
-// async function sendTypingIndicator (messageId) {
-//   try {
-//     await axios.post(
-//       `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-//       {
-//         messaging_product: 'whatsapp',
-//         status: 'read',
-//         message_id: messageId,
-//         typing_indicator: { type: 'text' }
-//       },
-//       {
-//         headers: {
-//           Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-//           'Content-Type': 'application/json'
-//         }
-//       }
-//     )
-//   } catch (err) {
-//     console.error(
-//       '❌ Typing indicator failed:',
-//       err.response?.data || err.message
-//     )
-//   }
-// }
-
-// // --- Safe reply helper ---
-// const replyAndExit = async (to, message, res, messageId) => {
-//   try {
-//     if (messageId) await markMessageAsRead(messageId)
-//     await new Promise(r => setTimeout(r, 1500)) // small delay for natural feel
-//     await sendWhatsAppMessage(to, message)
-//   } catch (err) {
-//     console.error('❌ replyAndExit failed:', err.message)
-//   } finally {
-//     if (res && typeof res.status === 'function') {
-//       return res.status(200).end()
-//     } else {
-//       console.warn('⚠️ No res object provided to replyAndExit')
-//     }
-//   }
-// }
-
-// // --- Main Handler ---
-// export const handleIncomingMessage = async (
-//   { from, text, profile, messageId },
-//   res
-// ) => {
-//   try {
-//     // ✅ Deduplicate incoming messages
-//     const exists = await Message.findOne({ externalId: messageId })
-//     if (exists) {
-//       console.log(`⚠️ Duplicate message ignored: ${messageId}`)
-//       return res?.status(200).end()
-//     }
-
-//     await markMessageAsRead(messageId)
-//     await sendTypingIndicator(messageId)
-
-//     // --- Ensure User exists ---
-//     let user = await User.findOne({ phone: from })
-
-//     if (!user) {
-//       user = await User.create({
-//         phone: from,
-//         whatsappName: profile?.name || 'WhatsApp User',
-//         fullName: null,
-//         address: null,
-//         preferences: {},
-//         loyaltyBalance: 0,
-//         totalOrders: 0,
-//         isOnboarded: false,
-//         conversationState: {}
-//       })
-//     }
-
-//     // Save message early to prevent reprocessing on retries
-//     await Message.create({
-//       userId: user._id,
-//       from: 'user',
-//       externalId: messageId,
-//       text
-//     })
-//     console.log(`📩 Message from ${user.phone}: ${text}`)
-//     const normalized = text.trim().toLowerCase()
-
-//     // --- Greetings ---
-//     if (
-//       user.isOnboarded &&
-//       [
-//         'hi',
-//         'hello',
-//         'hey',
-//         'good morning',
-//         'good afternoon',
-//         'good evening'
-//       ].includes(normalized)
-//     ) {
-//       return replyAndExit(
-//         from,
-//         `👋 Hi ${
-//           user.fullName || user.whatsappName
-//         }! You can place an order anytime. Just tell me what you want washed 🙂`,
-//         res,
-//         messageId
-//       )
-//     }
-
-//     // --- Onboarding Flow ---
-//     if (!user.isOnboarded) {
-//       const step = user.conversationState?.step
-//       if (!step) {
-//         user.conversationState = { step: 'awaiting_name' }
-//         await user.save()
-//         return replyAndExit(
-//           from,
-//           '👋 Welcome! Please tell me your *full name* to get started.',
-//           res,
-//           messageId
-//         )
-//       }
-//       if (step === 'awaiting_name') {
-//         user.fullName = text.trim() || user.whatsappName
-//         user.conversationState = { step: 'awaiting_address' }
-//         await user.save()
-//         return replyAndExit(
-//           from,
-//           `📍 Thanks ${user.fullName}! Now send me your *address*.`,
-//           res,
-//           messageId
-//         )
-//       }
-//       if (step === 'awaiting_address') {
-//         user.address = text.trim()
-//         user.conversationState = { step: 'awaiting_preferences' }
-//         await user.save()
-//         return replyAndExit(
-//           from,
-//           '💭 Great! Lastly, what are your laundry *preferences*? (fragrance, folding, ironing)\n\nExample: *Vanilla fragrance, neatly folded*',
-//           res,
-//           messageId
-//         )
-//       }
-//       if (step === 'awaiting_preferences') {
-//         user.preferences = { fragrance: text.trim() || '' }
-//         user.isOnboarded = true
-//         user.conversationState = {}
-//         await user.save()
-//         return replyAndExit(
-//           from,
-//           `✅ Thanks ${user.fullName}! Your details are saved.\n\nYou can now place orders like: *Wash 3 shirts and 2 trousers*.`,
-//           res,
-//           messageId
-//         )
-//       }
-//     }
-
-//     // --- Multi-step Order Flow ---
-//     if (user.conversationState?.step) {
-//       const state = user.conversationState
-//       const fakeMessageId = `${messageId}-internal-${Date.now()}` // ✅ prevents duplicate detection
-
-//       if (state.step === 'awaiting_items') {
-//         const parsedItems = await parseOrderIntent(text)
-//         state.tempOrder.items = parsedItems.items
-//         state.step = null
-//         user.conversationState = state
-//         await user.save()
-//         return handleIncomingMessage(
-//           { from, text: 'continue order', profile, messageId: fakeMessageId },
-//           res
-//         )
-//       }
-
-//       if (state.step === 'awaiting_turnaround') {
-//         state.tempOrder.turnaround = text.toLowerCase().includes('express')
-//           ? 'express'
-//           : text.toLowerCase().includes('same')
-//           ? 'same-day'
-//           : 'standard'
-//         state.step = null
-//         user.conversationState = state
-//         await user.save()
-//         return handleIncomingMessage(
-//           { from, text: 'continue order', profile, messageId: fakeMessageId },
-//           res
-//         )
-//       }
-
-//       if (state.step === 'awaiting_distance') {
-//         const km = parseInt(text)
-//         state.tempOrder.distanceKm = km
-//         state.step = null
-//         user.conversationState = state
-//         await user.save()
-//         return handleIncomingMessage(
-//           { from, text: 'continue order', profile, messageId: fakeMessageId },
-//           res
-//         )
-//       }
-
-//       if (state.step === 'awaiting_service') {
-//         const chosen = text.toLowerCase()
-//         let service
-//         if (chosen.includes('iron')) service = 'ironOnly'
-//         else if (chosen.includes('fold')) service = 'washFold'
-//         else service = 'washIron'
-
-//         state.tempOrder.items = state.tempOrder.items.map(i => {
-//           if (!i.service) i.service = service
-//           return i
-//         })
-//         state.step = null
-//         user.conversationState = state
-//         await user.save()
-//         return handleIncomingMessage(
-//           { from, text: 'continue order', profile, messageId: fakeMessageId },
-//           res
-//         )
-//       }
-//     }
-
-//     // Detect intent
-//     const intent = detectIntent(text)
-//     console.log('👉 Detected intent:', intent)
-
-//     let botReply = ''
-
-//     switch (intent) {
-//       case 'create_order': {
-//         // STEP 1️⃣: Handle points confirmation step first
-//         let parsed // ✅ Declare once
-
-//         try {
-//           parsed = await parseOrderIntent(text)
-//           if (!parsed || !parsed.items || parsed.items.length === 0) {
-//             console.warn('⚠️ AI returned empty result, using fallback parser')
-//             parsed = fallbackParseOrderIntent(text)
-//           }
-//         } catch (err) {
-//           console.error('❌ AI parsing failed, using fallback:', err.message)
-//           parsed = fallbackParseOrderIntent(text)
-//         }
-
-//         console.log('🧺 Parsed order items:', parsed.items)
-
-//         if (user.conversationState?.step === 'awaiting_points_confirm') {
-//           parsed = user.conversationState.tempOrder // ✅ just reassign
-//           const {
-//             items: pricedItems,
-//             subtotal,
-//             deliveryFee,
-//             total,
-//             warnings
-//           } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
-
-//           let pointsUsed = 0
-//           if (/^(yes|y|use|sure|ok)$/i.test(text)) {
-//             pointsUsed = Math.min(user.loyaltyBalance, total)
-//           }
-
-//           // Move to order confirmation step, storing pointsUsed for next step
-//           user.conversationState = {
-//             step: 'awaiting_order_confirm',
-//             tempOrder: parsed,
-//             pointsUsed
-//           }
-//           await user.save()
-
-//           botReply = `🧾 Here's your updated order summary:
-
-// 🧺 Items: ${pricedItems
-//             .map(i => `${i.quantity} ${i.name} (${i.service})`)
-//             .join(', ')}
-// 💵 Subtotal: ₦${subtotal}
-// 🚚 Delivery fee: ₦${deliveryFee}
-// 🎁 Points used: ₦${pointsUsed}
-// 💰 Total: ₦${total - pointsUsed}
-
-// ✅ Confirm order? (yes/no)`
-
-//           if (warnings.length) botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
-//           break
-//         }
-
-//         // STEP 2️⃣: Handle order confirmation step
-//         if (user.conversationState?.step === 'awaiting_order_confirm') {
-//           parsed = user.conversationState.tempOrder // ✅ reassign
-//           const pointsUsed = user.conversationState.pointsUsed || 0
-//           const {
-//             items: pricedItems,
-//             subtotal,
-//             deliveryFee,
-//             total,
-//             warnings
-//           } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
-
-//           if (/^yes$/i.test(text)) {
-//             const finalTotal = Math.max(total - pointsUsed, 0)
-//             let now = DateTime.now().setZone('Africa/Lagos')
-//             let dueDate =
-//               parsed.turnaround === 'express'
-//                 ? now.plus({ hours: 24 })
-//                 : parsed.turnaround === 'same-day'
-//                 ? now.plus({ hours: 8 })
-//                 : now.plus({ days: 2 })
-
-//             const order = await Order.create({
-//               userId: user._id,
-//               items: pricedItems,
-//               turnaround: parsed.turnaround,
-//               distanceKm: parsed.distanceKm,
-//               delivery: parsed.delivery,
-//               payment: parsed.payment,
-//               status: 'Pending',
-//               price: finalTotal,
-//               loyaltyRedeemed: pointsUsed,
-//               loyaltyEarned: Math.floor(finalTotal / 1000) * 10,
-//               assignedTo: await assignEmployee()
-//             })
-
-//             user.loyaltyBalance =
-//               user.loyaltyBalance - pointsUsed + order.loyaltyEarned
-//             user.totalOrders += 1
-//             user.conversationState = {}
-//             await user.save()
-
-//             botReply = `✅ Your order has been placed!
-
-// 🧺 Items: ${pricedItems
-//               .map(i => `${i.quantity} ${i.name} (${i.service})`)
-//               .join(', ')}
-
-// 💵 Subtotal: ₦${subtotal}
-// 🚚 Delivery fee: ₦${deliveryFee}
-// 🎁 Points used: ₦${pointsUsed}
-// 💰 Total: ₦${finalTotal}
-
-// 📅 Ready by: ${dueDate.toFormat('dd LLL, h:mma')}`
-
-//             if (warnings.length)
-//               botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
-//             break
-//           }
-//         }
-
-//         // STEP 3️⃣: Normal parsing flow
-//         parsed = user.conversationState?.tempOrder || parsed
-
-//         if (!parsed.items || parsed.items.length === 0) {
-//           user.conversationState = { step: 'awaiting_items', tempOrder: parsed }
-//           await user.save()
-//           botReply =
-//             "🧺 Please tell me what items you'd like me to wash. Example: *3 shirts, 2 trousers*."
-//           break
-//         }
-
-//         if (!parsed.turnaround) {
-//           user.conversationState = {
-//             step: 'awaiting_turnaround',
-//             tempOrder: parsed
-//           }
-//           await user.save()
-//           botReply =
-//             '⏱ How fast do you need it?\n- Standard (48h)\n- Express (24h, +40%)\n- Same-day (6–8h, +80%, ≤15 items)'
-//           break
-//         }
-
-//         if (parsed.distanceKm == null) {
-//           user.conversationState = {
-//             step: 'awaiting_distance',
-//             tempOrder: parsed
-//           }
-//           await user.save()
-//           botReply =
-//             '🚚 Do you need pickup/delivery? If yes, how far are you from us (in km)?\nExample: *2 km*'
-//           break
-//         }
-
-//         if (parsed.items.some(i => !i.service)) {
-//           user.conversationState = {
-//             step: 'awaiting_service',
-//             tempOrder: parsed
-//           }
-//           await user.save()
-//           botReply = `🧺 Which service would you like for these items?\n- Wash & Iron\n- Wash & Fold\n- Iron Only`
-//           break
-//         }
-
-//         // STEP 4️⃣: Price calculation before asking for points
-//         const {
-//           items: pricedItems,
-//           subtotal,
-//           deliveryFee,
-//           total,
-//           warnings
-//         } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
-
-//         if (user.loyaltyBalance > 0) {
-//           user.conversationState = {
-//             step: 'awaiting_points_confirm',
-//             tempOrder: parsed
-//           }
-//           await user.save()
-
-//           botReply = `🎁 You have ${user.loyaltyBalance} loyalty points.\nWould you like to use them for this order? (yes/no)`
-//           break
-//         }
-
-//         user.conversationState = {
-//           step: 'awaiting_order_confirm',
-//           tempOrder: parsed,
-//           pointsUsed: 0
-//         }
-//         await user.save()
-
-//         botReply = `🧾 Here's your order summary:
-
-// 🧺 Items: ${pricedItems
-//           .map(i => `${i.quantity} ${i.name} (${i.service})`)
-//           .join(', ')}
-// 💵 Subtotal: ₦${subtotal}
-// 🚚 Delivery fee: ₦${deliveryFee}
-// 💰 Total: ₦${total}
-
-// ✅ Confirm order? (yes/no)`
-
-//         if (warnings.length) botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
-//         break
-//       }
-
-//       case 'track_order': {
-//         const lastOrder = await Order.findOne({ userId: user._id }).sort({
-//           createdAt: -1
-//         })
-//         if (!lastOrder || !lastOrder.status) {
-//           botReply = "📦 You don't have any orders yet."
-//         } else {
-//           const status = lastOrder.status || 'Pending'
-//           const emoji = STATUS_EMOJIS[status] || '📦'
-//           botReply = `📦 Your last order is currently: ${emoji} ${status}`
-//         }
-//         break
-//       }
-
-//       case 'check_loyalty': {
-//         botReply = `🌟 You currently have *${user.loyaltyBalance} loyalty points*.
-// You can type *"use points"* during your next order to get a discount.`
-//         break
-//       }
-
-//       case 'update_preferences': {
-//         const lower = text.toLowerCase()
-//         const newPrefs = { ...user.preferences }
-
-//         if (lower.includes('fragrance')) {
-//           const match = lower.match(/fragrance\s*(?:to|=)?\s*([a-z]+)/)
-//           if (match) newPrefs.fragrance = match[1]
-//         }
-//         if (lower.includes('fold')) newPrefs.folding = 'neatly folded'
-//         if (lower.includes('iron')) newPrefs.ironing = 'well ironed'
-
-//         user.preferences = newPrefs
-//         await user.save()
-
-//         botReply = `✅ Preferences updated!\n\n📝 Current preferences:\n${Object.entries(
-//           newPrefs
-//         )
-//           .map(([k, v]) => `• ${k}: ${v}`)
-//           .join('\n')}`
-//         break
-//       }
-
-//       case 'my_orders': {
-//         const orders = await Order.find({ userId: user._id })
-//           .sort({ createdAt: -1 })
-//           .limit(5)
-
-//         if (!orders.length) {
-//           botReply = "📦 You haven't placed any orders yet."
-//           break
-//         }
-
-//         botReply = `🧾 Your Recent Orders:\n\n${orders
-//           .map((o, i) => {
-//             const redeemed =
-//               o.loyaltyRedeemed > 0 ? `🎁 Redeemed: ₦${o.loyaltyRedeemed}` : ''
-//             const earned =
-//               o.loyaltyEarned > 0 ? `⭐ Earned: ${o.loyaltyEarned} pts` : ''
-//             const extras = [redeemed, earned].filter(Boolean).join(' | ') // join with separator if both exist
-
-//             return `${i + 1}. ${STATUS_EMOJIS[o.status] || '📦'} *${o._id
-//               .toString()
-//               .slice(-6)
-//               .toUpperCase()}*\n   • ${DateTime.fromJSDate(
-//               o.createdAt
-//             ).toFormat('dd LLL yyyy')}\n   • ₦${o.price} — ${o.status}${
-//               extras ? `\n   • ${extras}` : ''
-//             }`
-//           })
-//           .join('\n\n')}`
-//         break
-//       }
-
-//       case 'farewell': {
-//         const farewellReplies = [
-//           '👋 Bye! Talk to you soon.',
-//           '😊 Thanks for chatting with us. Have a great day!',
-//           '🙌 See you later!',
-//           "💙 Thank you! We'll be here when you need us again."
-//         ]
-//         botReply =
-//           farewellReplies[Math.floor(Math.random() * farewellReplies.length)]
-//         break
-//       }
-
-//       default: {
-//         botReply = await processUserMessage(user._id, text)
-//       }
-//     }
-
-//     await Message.create({ userId: user._id, from: 'bot', text: botReply })
-//     await sendWhatsAppMessage(from, botReply)
-//     res.status(200).end()
-//   } catch (err) {
-//     if (res && typeof res.status === 'function') {
-//       res.status(200).end()
-//     } else {
-//       console.warn('⚠️ No res object provided at end of handleIncomingMessage')
-//     }
-//     return // prevent crash if res is missing
-//   }
-// }
+// controllers/botController.js
+// Incoming WhatsApp message pipeline:
+// 1) dedupe + read receipt/typing
+// 2) human-handoff mode (bot stays silent until #resume)
+// 3) secure account linking / registration state machine (passwords are NEVER
+//    stored in the Message log and NEVER passed to the LLM)
+// 4) everything else → AI agent (full Chuvi backend tool access)
 
 import axios from 'axios'
-import {
-  detectIntent,
-  parseOrderIntent,
-  processUserMessage
-} from '../helpers/openAi.js'
-import { sendWhatsAppMessage } from '../helpers/whatsApp.js'
-import User from '../models/User.js'
-import Order from '../models/Order.js'
-import Message from '../models/Message.js'
 import dotenv from 'dotenv'
-import { DateTime } from 'luxon'
-import { calculatePrice } from '../helpers/pricing.js'
-import { assignEmployee } from '../helpers/employeeAssignment.js'
+import User from '../models/User.js'
+import Message from '../models/Message.js'
+import { sendWhatsAppMessage, sendWhatsAppButtons } from '../helpers/whatsApp.js'
+import { runAgent } from '../helpers/agent.js'
+import { ChuviClient, ChuviApiError } from '../services/chuviApi.js'
 
 dotenv.config()
 
-const STATUS_EMOJIS = {
-  Pending: '⏳',
-  'In Wash': '🧺',
-  Ironing: '👔',
-  Packaging: '🎁',
-  Ready: '✅',
-  Delivered: '🚚'
+const GRAPH = `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`
+const graphHeaders = {
+  Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+  'Content-Type': 'application/json'
 }
 
-// --- Helpers ---
-async function markMessageAsRead (messageId) {
+async function markRead (messageId, typing = true) {
   try {
-    await axios.post(
-      `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-      { messaging_product: 'whatsapp', status: 'read', message_id: messageId },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    )
+    await axios.post(GRAPH, {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: messageId,
+      ...(typing && { typing_indicator: { type: 'text' } })
+    }, { headers: graphHeaders })
   } catch (err) {
-    console.error(
-      '❌ Failed to mark message as read:',
-      err.response?.data || err.message
-    )
+    console.error('markRead failed:', err.response?.data || err.message)
   }
 }
 
-async function sendTypingIndicator (messageId) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v20.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        status: 'read',
-        message_id: messageId,
-        typing_indicator: { type: 'text' }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    )
-  } catch (err) {
-    console.error(
-      '❌ Typing indicator failed:',
-      err.response?.data || err.message
-    )
+async function reply (botUser, to, text, { log = true, buttons = null } = {}) {
+  if (buttons?.length) {
+    await sendWhatsAppButtons(to, text, buttons)
+    if (log) await Message.create({ userId: botUser._id, from: 'bot', text: `${text} [Buttons: ${buttons.map(b => b.title).join(' | ')}]` })
+  } else {
+    await sendWhatsAppMessage(to, text)
+    if (log) await Message.create({ userId: botUser._id, from: 'bot', text })
   }
 }
 
-const replyAndExit = async (to, message, res, messageId) => {
-  try {
-    if (messageId) await markMessageAsRead(messageId)
-    await new Promise(r => setTimeout(r, 1200))
-    await sendWhatsAppMessage(to, message)
-    await Message.create({ from: 'bot', to, text: message })
-  } catch (err) {
-    console.error('❌ replyAndExit failed:', err.message)
-  } finally {
-    return res?.status(200).end()
-  }
-}
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// --- MAIN HANDLER ---
-export const handleIncomingMessage = async (
-  { from, text, profile, messageId },
-  res
-) => {
-  try {
-    const exists = await Message.findOne({ externalId: messageId })
-    if (exists) {
-      console.log(`⚠️ Duplicate message ignored: ${messageId}`)
-      return res?.status(200).end()
+/* ------------------------- account linking flow ------------------------- */
+// Steps: link_email → link_password  (existing account)
+//        reg_name → reg_email → reg_password → reg_otp  (new account)
+
+async function handleLinkingFlow (botUser, text) {
+  const step = botUser.conversationState?.step
+  const draft = botUser.conversationState?.linkDraft || {}
+  const api = new ChuviClient(botUser)
+  const t = text.trim()
+
+  const setState = async (next, draftPatch = {}) => {
+    botUser.conversationState = {
+      ...botUser.conversationState,
+      step: next,
+      linkDraft: next ? { ...draft, ...draftPatch } : {}
+    }
+    botUser.markModified('conversationState')
+    await botUser.save()
+  }
+
+  if (/^cancel$/i.test(t)) {
+    await setState(null)
+    return '✅ Okay, cancelled. You can reply *link account* anytime.'
+  }
+
+  switch (step) {
+    case 'link_email': {
+      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email. Please send the email on your Chuvi account (or *cancel*).'
+      await setState('link_password', { email: t.toLowerCase() })
+      return '🔐 Got it. Now send your *password*.\n\n_For your privacy we don\'t store this message, and you can delete it from the chat after sending._'
     }
 
-    await markMessageAsRead(messageId)
-    await sendTypingIndicator(messageId)
+    case 'link_password': {
+      try {
+        const user = await api.login(draft.email, t)
+        await setState(null)
+        const name = user?.fullName?.split(' ')[0]
+        return {
+          text: `✅ Account linked${name ? `, ${name}` : ''}! 🎉\n\nYou can now do everything right here — book orders, track them, pay, manage your wallet and subscription. What would you like to do?`,
+          buttons: [
+            { id: 'cmd:book', title: '🧺 Book Order' },
+            { id: 'cmd:balance', title: '👛 Wallet' },
+            { id: 'cmd:plans', title: '⭐ Plans' }
+          ]
+        }
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Login failed.'
+        await setState('link_email')
+        return `❌ ${msg}\n\nLet's try again — please send your *email* (or *cancel*, or *create account* if you don't have one).`
+      }
+    }
+
+    case 'reg_name': {
+      if (t.length < 2) return 'Please send your *full name*.'
+      await setState('reg_email', { fullName: t })
+      return '📧 Thanks! What *email* should we use for your account?'
+    }
+
+    case 'reg_email': {
+      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email — try again (or *cancel*).'
+      await setState('reg_password', { email: t.toLowerCase() })
+      return '🔐 Now choose a *password* (at least 8 characters).\n\n_We don\'t store this message — feel free to delete it after sending._'
+    }
+
+    case 'reg_password': {
+      if (t.length < 8) return '🔐 Password must be at least 8 characters. Try another one.'
+      try {
+        await api.register({
+          fullName: draft.fullName,
+          email: draft.email,
+          password: t,
+          phoneNumber: botUser.phone.startsWith('+') ? botUser.phone : `+${botUser.phone}`
+        })
+        await setState('reg_otp', { password: undefined })
+        return `📨 Almost done! We've sent a verification code to *${draft.email}*. Please send me the *OTP*.`
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Registration failed.'
+        if (/exist/i.test(msg)) {
+          await setState('link_email')
+          return `ℹ️ ${msg}\nLooks like you already have an account — let's link it instead. Please send your *email*.`
+        }
+        return `❌ ${msg}\nPlease try a different password (or *cancel*).`
+      }
+    }
+
+    case 'reg_otp': {
+      try {
+        await api.verifyOtp(draft.email, t.replace(/\s/g, ''))
+        await setState('link_email', {})
+        return `✅ Email verified! Now let's sign you in — please send your *email* again to link this WhatsApp to your new account.`
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Verification failed.'
+        if (/resend/i.test(t)) {
+          await api.resendOtp(draft.email).catch(() => {})
+          return '📨 A new code has been sent. Please send me the OTP.'
+        }
+        return `❌ ${msg}\nSend the code again, reply *resend* for a new one, or *cancel*.`
+      }
+    }
+
+    default:
+      return null
+  }
+}
+
+/* ------------------------------ main handler ------------------------------ */
+
+export const handleIncomingMessage = async ({ from, text, buttonId, profile, messageId }, res) => {
+  // WhatsApp's typing indicator expires after ~25s; keep it alive while we work
+  // (slow paths: agent runs with multiple backend calls). Cleared in finally.
+  let typingKeepAlive = null
+  try {
+    // Translate tapped buttons (by id) into deterministic input for the pipeline
+    if (buttonId) {
+      const [cmd, arg] = buttonId.startsWith('cmd:')
+        ? [buttonId.slice(4).split(':')[0], buttonId.split(':').slice(2).join(':') || buttonId.split(':')[2]]
+        : [null, null]
+      const CMD_TEXT = {
+        link_account: 'link account',
+        create_account: 'create account',
+        prices: 'Show me the current price list',
+        agent: 'I want to talk to a human agent',
+        my_orders: 'Show my recent orders',
+        balance: "What's my wallet balance?",
+        book: 'I want to book a laundry order',
+        plans: 'Show me the subscription plans'
+      }
+      if (cmd === 'track' && arg) text = `Track my order with id ${arg}`
+      else if (cmd === 'pay_wallet' && arg) text = `Pay for my order with id ${arg} from my wallet`
+      else if (cmd === 'pay_link' && arg) text = `Send me a payment link for my order with id ${arg}`
+      else if (cmd && CMD_TEXT[cmd]) text = CMD_TEXT[cmd]
+      // otherwise fall through with the button title as text
+    }
+    if (!text) return res?.status(200).end()
+
+    const exists = await Message.findOne({ externalId: messageId })
+    if (exists) return res?.status(200).end()
+
+    await markRead(messageId)
+    typingKeepAlive = setInterval(() => markRead(messageId), 20000)
 
     let user = await User.findOne({ phone: from })
     if (!user) {
       user = await User.create({
         phone: from,
         whatsappName: profile?.name || 'WhatsApp User',
-        loyaltyBalance: 0,
-        totalOrders: 0,
-        isOnboarded: false,
+        isOnboarded: true, // onboarding now happens via account linking
         conversationState: {}
       })
     }
 
+    const step = user.conversationState?.step
+    const isSecretStep = step === 'link_password' || step === 'reg_password'
+
+    // Log the inbound message — but never log passwords
     await Message.create({
       userId: user._id,
       from: 'user',
       externalId: messageId,
-      text
+      text: isSecretStep ? '••••••••' : text
     })
 
-    console.log(`📩 Message from ${user.phone}: ${text}`)
     const normalized = text.trim().toLowerCase()
 
-    // --- Handle awaiting order confirmation ---
-    if (user.conversationState?.step === 'awaiting_order_confirm') {
-      if (/^(yes|y|confirm)$/i.test(normalized)) {
-        const orderData = user.conversationState.tempOrder
-        const {
-          items: pricedItems,
-          subtotal,
-          deliveryFee,
-          total
-        } = calculatePrice(
-          orderData.items,
-          orderData.turnaround,
-          orderData.distanceKm
-        )
-
-        const now = DateTime.now().setZone('Africa/Lagos')
-        const dueDate =
-          orderData.turnaround === 'express'
-            ? now.plus({ hours: 24 })
-            : orderData.turnaround === 'same-day'
-            ? now.plus({ hours: 8 })
-            : now.plus({ days: 2 })
-
-        const employee = await assignEmployee()
-
-        const order = await Order.create({
-          userId: user._id,
-          items: pricedItems,
-          turnaround: orderData.turnaround,
-          distanceKm: orderData.distanceKm,
-          delivery: orderData.delivery || 'pickup',
-          payment: orderData.payment || 'cash',
-          status: 'Pending',
-          price: total,
-          loyaltyRedeemed: 0,
-          loyaltyEarned: Math.floor(total / 1000) * 10,
-          assignedTo: employee
-        })
-
-        user.loyaltyBalance += order.loyaltyEarned
-        user.totalOrders += 1
-        user.conversationState = {}
+    // --- Human handoff mode: bot stays quiet until an agent resumes it ---
+    if (user.supportMode) {
+      if (normalized === '#resume') {
+        user.supportMode = false
         await user.save()
-
-        return replyAndExit(
-          from,
-          `✅ Order placed!\n\n🧺 Items: ${pricedItems
-            .map(i => `${i.quantity} ${i.name} (${i.service})`)
-            .join(', ')}\n💵 Total: ₦${total}\n📅 Ready by: ${dueDate.toFormat(
-            'dd LLL, h:mma'
-          )}\n👤 Assigned to: ${employee?.name || 'Unassigned'}`,
-          res,
-          messageId
-        )
+        await reply(user, from, '🤖 Hi again! I\'m back and ready to help. What can I do for you?')
       }
+      // otherwise: a human agent is handling this chat; do not auto-respond
+      return res?.status(200).end()
+    }
 
-      if (/^(no|n|cancel)$/i.test(normalized)) {
-        user.conversationState = {}
-        await user.save()
-        return replyAndExit(
-          from,
-          '❌ Order cancelled. You can start a new order anytime.',
-          res,
-          messageId
-        )
+    // --- Linking / registration state machine ---
+    if (step?.startsWith('link_') || step?.startsWith('reg_')) {
+      const flowReply = await handleLinkingFlow(user, text)
+      if (flowReply) {
+        if (typeof flowReply === 'string') await reply(user, from, flowReply)
+        else await reply(user, from, flowReply.text, { buttons: flowReply.buttons })
+        return res?.status(200).end()
       }
     }
 
-    // --- Onboarding flow (unchanged) ---
-    if (!user.isOnboarded) {
-      const step = user.conversationState?.step
-      if (!step) {
-        user.conversationState = { step: 'awaiting_name' }
-        await user.save()
-        return replyAndExit(
-          from,
-          '👋 Welcome! Please tell me your *full name*.',
-          res,
-          messageId
-        )
-      }
-      if (step === 'awaiting_name') {
-        user.fullName = text.trim() || user.whatsappName
-        user.conversationState = { step: 'awaiting_address' }
-        await user.save()
-        return replyAndExit(
-          from,
-          `📍 Thanks ${user.fullName}! Please send me your *address*.`,
-          res,
-          messageId
-        )
-      }
-      if (step === 'awaiting_address') {
-        user.address = text.trim()
-        user.conversationState = { step: 'awaiting_preferences' }
-        await user.save()
-        return replyAndExit(
-          from,
-          '💭 Great! What are your laundry preferences? (e.g. *Vanilla fragrance, neatly folded*)',
-          res,
-          messageId
-        )
-      }
-      if (step === 'awaiting_preferences') {
-        user.preferences = { notes: text.trim() }
-        user.isOnboarded = true
-        user.conversationState = {}
-        await user.save()
-        return replyAndExit(
-          from,
-          `✅ Setup complete! You can now place an order: *Wash 3 shirts and 2 trousers*.`,
-          res,
-          messageId
-        )
-      }
+    // --- Explicit commands ---
+    if (/^link( my)? account$|^login$|^sign ?in$/i.test(normalized)) {
+      user.conversationState = { step: 'link_email', linkDraft: {} }
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, '🔗 Let\'s connect your Chuvi account.\n\nPlease send the *email* on your account.\n(No account yet? Reply *create account*. To stop, reply *cancel*.)')
+      return res?.status(200).end()
     }
 
-    // --- Intent detection ---
-    const intent = detectIntent(text)
-    console.log('👉 Detected intent:', intent)
-
-    let botReply = ''
-
-    switch (intent) {
-      case 'create_order': {
-        let parsed = parseOrderIntent(text)
-
-        if (!parsed.items || parsed.items.length === 0) {
-          user.conversationState = { step: 'awaiting_items', tempOrder: parsed }
-          await user.save()
-          botReply =
-            "🧺 Please tell me what items you'd like me to wash. Example: *3 shirts, 2 trousers*."
-          break
-        }
-
-        if (!parsed.turnaround) {
-          user.conversationState = {
-            step: 'awaiting_turnaround',
-            tempOrder: parsed
-          }
-          await user.save()
-          botReply =
-            '⏱ How fast do you need it?\n- Standard (48h)\n- Express (24h, +40%)\n- Same-day (6–8h, +80%)'
-          break
-        }
-
-        if (parsed.distanceKm == null) {
-          user.conversationState = {
-            step: 'awaiting_distance',
-            tempOrder: parsed
-          }
-          await user.save()
-          botReply = '🚚 How far are you from us (in km)? Example: *2 km*'
-          break
-        }
-
-        if (parsed.items.some(i => !i.service)) {
-          user.conversationState = {
-            step: 'awaiting_service',
-            tempOrder: parsed
-          }
-          await user.save()
-          botReply = `🧺 Which service would you like?\n- Wash & Iron\n- Wash & Fold\n- Iron Only`
-          break
-        }
-
-        const {
-          items: pricedItems,
-          subtotal,
-          deliveryFee,
-          total,
-          warnings
-        } = calculatePrice(parsed.items, parsed.turnaround, parsed.distanceKm)
-
-        user.conversationState = {
-          step: 'awaiting_order_confirm',
-          tempOrder: parsed,
-          pointsUsed: 0
-        }
-        await user.save()
-
-        botReply = `🧾 Here's your order summary:\n\n🧺 Items: ${pricedItems
-          .map(i => `${i.quantity} ${i.name} (${i.service})`)
-          .join(
-            ', '
-          )}\n💵 Subtotal: ₦${subtotal}\n🚚 Delivery fee: ₦${deliveryFee}\n💰 Total: ₦${total}\n\n✅ Confirm order? (yes/no)`
-        if (warnings.length) botReply += `\n\n⚠️ Note: ${warnings.join(' ')}`
-        break
-      }
-
-      case 'my_orders': {
-        const orders = await Order.find({ userId: user._id })
-          .sort({ createdAt: -1 })
-          .limit(3)
-        if (!orders.length) {
-          botReply = '📦 You have no orders yet.'
-          break
-        }
-        botReply = `📝 Your recent orders:\n\n${orders
-          .map(
-            o =>
-              `• ${STATUS_EMOJIS[o.status] || ''} *${o.status}* – ₦${
-                o.price
-              } (${DateTime.fromJSDate(o.createdAt).toFormat('dd LLL')})`
-          )
-          .join('\n')}`
-        break
-      }
-
-      case 'update_preferences': {
-        user.preferences = { notes: text }
-        await user.save()
-        botReply = `✅ Your preferences have been updated to: *${text}*`
-        break
-      }
-
-      case 'track_order': {
-        const lastOrder = await Order.findOne({ userId: user._id }).sort({
-          createdAt: -1
-        })
-        botReply = lastOrder
-          ? `📦 Your last order is currently: ${
-              STATUS_EMOJIS[lastOrder.status] || ''
-            } *${lastOrder.status}*`
-          : '📦 You have no active orders right now.'
-        break
-      }
-
-      case 'check_loyalty': {
-        botReply = `🎁 You have ${user.loyaltyBalance} loyalty points available.`
-        break
-      }
-
-      case 'greeting': {
-        botReply = `👋 Hi ${
-          user.fullName || user.whatsappName
-        }! How can I help you today?`
-        break
-      }
-
-      default: {
-        botReply = await processUserMessage(user._id, text)
-        break
-      }
+    if (/^create( an)? account$|^register$|^sign ?up$/i.test(normalized)) {
+      user.conversationState = { step: 'reg_name', linkDraft: {} }
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, '📝 Let\'s create your Chuvi account!\n\nFirst, what\'s your *full name*?')
+      return res?.status(200).end()
     }
 
-    await Message.create({ userId: user._id, from: 'bot', text: botReply })
-    await sendWhatsAppMessage(from, botReply)
+    if (/^unlink( account)?$|^log ?out$/i.test(normalized)) {
+      await new ChuviClient(user).unlinkLocal()
+      await reply(user, from, '🔓 Your Chuvi account has been disconnected from this WhatsApp. Reply *link account* anytime to reconnect.')
+      return res?.status(200).end()
+    }
+
+    // First contact nudge for unlinked users (still let the agent answer questions)
+    if (!user.chuvi?.accessToken && /^(hi|hello|hey|start|good (morning|afternoon|evening))/i.test(normalized)) {
+      const name = profile?.name || user.whatsappName
+      const welcome = `👋 Hi ${name}! I'm *Chuvi*, your laundry assistant.\n\nI can book orders, track them, handle payments, manage your wallet and subscription — everything the app does, right here in WhatsApp. 🧺\n\nConnect your Chuvi account to get started, or just ask me anything about our services and prices!`
+      await sendWhatsAppButtons(from, welcome, [
+        { id: 'cmd:link_account', title: '🔗 Link account' },
+        { id: 'cmd:create_account', title: '📝 Create account' },
+        { id: 'cmd:prices', title: '🏷️ See prices' }
+      ])
+      await Message.create({ userId: user._id, from: 'bot', text: welcome + ' [Buttons: Link account | Create account | See prices]' })
+      return res?.status(200).end()
+    }
+
+    // --- Everything else → the agent ---
+    const botReply = await runAgent(user, text)
+    const skip = !botReply || !botReply.trim() || botReply.trim() === 'NO_REPLY'
+    if (!skip) await reply(user, from, botReply)
     return res?.status(200).end()
   } catch (err) {
     console.error('❌ handleIncomingMessage error:', err)
-    return res?.status(500).json({ error: 'Internal server error' })
+    try { await sendWhatsAppMessage(from, '⚠️ Sorry, something went wrong on my end. Please try again in a moment.') } catch (_) {}
+    return res?.status(200).end()
+  } finally {
+    if (typingKeepAlive) clearInterval(typingKeepAlive)
   }
 }
