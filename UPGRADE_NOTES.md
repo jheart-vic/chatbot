@@ -115,6 +115,14 @@ Customer `segment` lives on the bot's User model (default `student`).
 - **Email probe during registration**: when any user enters an email in the create-account flow, the bot checks it against the backend with a side-effect-free probe (a throwaway-password login attempt — no emails sent). Already registered & verified → Log in / Reset password buttons; registered but unverified → fresh OTP + straight to verification; free → continues normally. If the backend is unreachable the probe returns `unknown` and registration proceeds (the backend's own duplicate check still applies).
 - **Full password-reset flow in chat**: *reset password* (typed or button) → email (one-tap button if we remember it) → reset code via `/auth/forgot-password` → OTP verify (`/auth/verify-reset-password-otp`, returns a reset JWT) → new password (masked in logs like all passwords) → `/auth/reset-password` → straight into account linking. Compromised-account messaging included.
 
+## Webhook reliability + abandoned-flow follow-up (new)
+
+- **Instant webhook ack**: the webhook now returns 200 to Meta immediately and processes everything (OpenAI agent, backend calls) in the background. Previously the 200 waited for the full agent run (10-30s) — past Meta's ~10s timeout — causing retries, growing backoff, and the "send twice before it responds" symptom.
+- **Atomic dedupe**: Meta's retries are absorbed by inserting the inbound message against the unique `externalId` index (duplicate-key = already processed). Race-proof even when two deliveries arrive simultaneously.
+- **Stale-flow expiry**: any registration/linking/reset flow older than 24h auto-clears so users can never get trapped mid-flow.
+- **Abandoned-flow follow-up**: the journey engine nudges users who went silent mid-registration/linking/reset — once, after 2h (2 min in test mode): "Looks like we didn't finish creating your account — want to pick up where we left off?" with ▶️ Continue / ❌ Cancel buttons. Continue re-prompts the exact step they were on.
+- Note: instant ack solves the Meta-timeout delays, but Render free-tier cold starts (~30-60s wake-up after 15 min idle) are infrastructure: either upgrade the bot to a paid instance or point a free uptime pinger (e.g. UptimeRobot) at the bot's `/` health endpoint every 5-10 minutes.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.

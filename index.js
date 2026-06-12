@@ -22,7 +22,7 @@ app.use('/api/whatsapp', whatsappRoutes)
 app.use('/api/internal', internalRoutes)
 
 // Health check
-app.get('/', (req, res) => {
+app.get('/health', (req, res) => {
   res.send('Chuvi WhatsApp Bot running ✅')
 })
 

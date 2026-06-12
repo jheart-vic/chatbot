@@ -1,5 +1,4 @@
 import { handleIncomingMessage as botHandler } from "./botController.js";
-import Message from "../models/Message.js";
 
 /**
  * Extract usable input from any supported inbound message type.
@@ -41,16 +40,14 @@ export const handleIncomingMessage = async (req, res) => {
 
     console.log("📩 Incoming webhook:", { from, messageId, type: message.type, buttonId: parsed.buttonId });
 
-    // 🚫 Deduplicate
-    const already = await Message.findOne({ externalId: messageId });
-    if (already) {
-      console.log("⏭️ Skipping duplicate message:", messageId);
-      return res.sendStatus(200);
-    }
-
-    await botHandler({ from, text: parsed.text, buttonId: parsed.buttonId, profile, messageId });
-
+    // ⚡ ACK IMMEDIATELY — Meta times out slow webhooks (~10s) and starts
+    // throttling/retrying. All real work (OpenAI, backend calls) happens after
+    // the 200. Duplicate retries are absorbed atomically in botController via
+    // the unique externalId index.
     res.sendStatus(200);
+
+    botHandler({ from, text: parsed.text, buttonId: parsed.buttonId, profile, messageId })
+      .catch((err) => console.error("❌ Background processing failed:", err));
   } catch (err) {
     console.error("❌ WhatsApp Webhook Error:", err);
     if (!res.headersSent) res.sendStatus(500);

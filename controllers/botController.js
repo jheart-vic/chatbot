@@ -61,6 +61,8 @@ async function handleLinkingFlow (botUser, text) {
     botUser.conversationState = {
       ...botUser.conversationState,
       step: next,
+      lastStepAt: next ? new Date() : null,
+      nudgedAt: null,
       linkDraft: next ? { ...draft, ...draftPatch } : {}
     }
     botUser.markModified('conversationState')
@@ -257,12 +259,6 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     }
     if (!text) return res?.status(200).end()
 
-    const exists = await Message.findOne({ externalId: messageId })
-    if (exists) return res?.status(200).end()
-
-    await markRead(messageId)
-    typingKeepAlive = setInterval(() => markRead(messageId), 20000)
-
     let user = await User.findOne({ phone: from })
     if (!user) {
       user = await User.create({
@@ -273,16 +269,38 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
       })
     }
 
-    const step = user.conversationState?.step
+    // Expire stale flows (>24h) so users never get trapped mid-registration
+    let step = user.conversationState?.step
+    const stepAge = user.conversationState?.lastStepAt
+      ? Date.now() - new Date(user.conversationState.lastStepAt).getTime()
+      : null
+    if (step && stepAge !== null && stepAge > 24 * 60 * 60 * 1000) {
+      user.conversationState = {}
+      user.markModified('conversationState')
+      step = null
+    }
+
     const isSecretStep = step === 'link_password' || step === 'reg_password' || step === 'reset_password'
 
-    // Log the inbound message — but never log passwords
-    await Message.create({
-      userId: user._id,
-      from: 'user',
-      externalId: messageId,
-      text: isSecretStep ? '••••••••' : text
-    })
+    // 🔒 Atomic dedupe: externalId has a unique index, so Meta's webhook
+    // retries can never double-process — even if two deliveries race.
+    try {
+      await Message.create({
+        userId: user._id,
+        from: 'user',
+        externalId: messageId,
+        text: isSecretStep ? '••••••••' : text
+      })
+    } catch (err) {
+      if (err?.code === 11000) return res?.status(200).end() // duplicate delivery
+      throw err
+    }
+
+    user.lastInboundAt = new Date()
+    await user.save()
+
+    await markRead(messageId)
+    typingKeepAlive = setInterval(() => markRead(messageId), 20000)
 
     const normalized = text.trim().toLowerCase()
 
@@ -294,6 +312,39 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
         await reply(user, from, '🤖 Hi again! I\'m back and ready to help. What can I do for you?')
       }
       // otherwise: a human agent is handling this chat; do not auto-respond
+      return res?.status(200).end()
+    }
+
+    // Resume / cancel an abandoned flow (from the follow-up nudge)
+    if (buttonId === 'cmd:cancel_flow') {
+      user.conversationState = {}
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, '✅ No problem — cancelled. Whenever you\'re ready, just reply *link account* or *create account*. 😊')
+      return res?.status(200).end()
+    }
+
+    if (buttonId === 'cmd:resume_flow') {
+      const PROMPTS = {
+        link_email: '🔗 Let\'s continue linking your account.\n\nPlease send the *email* on your CHUVI account.',
+        link_password: '🔐 Almost there — please send your *password*.\n\n_We don\'t store this message._',
+        reg_name: '📝 Let\'s continue! What\'s your *full name*?',
+        reg_email: '📧 Let\'s continue — what *email* should we use for your account?',
+        reg_password: '🔐 Let\'s continue — choose a *password* (at least 8 characters).\n\n_We don\'t store this message._',
+        reg_otp: '📨 Let\'s continue — send me the *OTP* from your email (or reply *resend* for a new code).',
+        reset_email: '🔁 Let\'s continue resetting your password. Please send the *email* on your account.',
+        reset_otp: '📨 Let\'s continue — send me the *reset code* from your email.',
+        reset_password: '🔐 Let\'s continue — send your *new password* (at least 8 characters).\n\n_We don\'t store this message._'
+      }
+      const prompt = PROMPTS[step]
+      if (prompt) {
+        user.conversationState = { ...user.conversationState, lastStepAt: new Date(), nudgedAt: null }
+        user.markModified('conversationState')
+        await user.save()
+        await reply(user, from, prompt)
+      } else {
+        await reply(user, from, 'Looks like that session already ended. Reply *link account* or *create account* to start fresh. 😊')
+      }
       return res?.status(200).end()
     }
 
@@ -309,7 +360,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
 
     // --- Explicit commands ---
     if (/^link( my)? account$|^login$|^sign ?in$/i.test(normalized)) {
-      user.conversationState = { step: 'link_email', linkDraft: {} }
+      user.conversationState = { step: 'link_email', lastStepAt: new Date(), linkDraft: {} }
       user.markModified('conversationState')
       await user.save()
       await reply(user, from, '🔗 Let\'s connect your Chuvi account.\n\nPlease send the *email* on your account.\n(No account yet? Reply *create account*. To stop, reply *cancel*.)')
@@ -328,7 +379,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
           ] })
         return res?.status(200).end()
       }
-      user.conversationState = { step: 'reg_name', linkDraft: {} }
+      user.conversationState = { step: 'reg_name', lastStepAt: new Date(), linkDraft: {} }
       user.markModified('conversationState')
       await user.save()
       await reply(user, from, '📝 Let\'s create your Chuvi account!\n\nFirst, what\'s your *full name*?')
@@ -337,7 +388,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
 
     // Explicit "new account anyway" (from the button) skips the reminder
     if (buttonId === 'cmd:new_account') {
-      user.conversationState = { step: 'reg_name', linkDraft: {} }
+      user.conversationState = { step: 'reg_name', lastStepAt: new Date(), linkDraft: {} }
       user.markModified('conversationState')
       await user.save()
       await reply(user, from, '📝 Okay! Let\'s create a new Chuvi account.\n\nFirst, what\'s your *full name*?')
@@ -347,7 +398,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     // Password reset entry (typed or via button)
     if (buttonId === 'cmd:reset_password' || /^(reset|forgot)( my)? ?password$/i.test(normalized)) {
       const remembered = user.chuvi?.email || user.knownEmail
-      user.conversationState = { step: 'reset_email', linkDraft: {} }
+      user.conversationState = { step: 'reset_email', lastStepAt: new Date(), linkDraft: {} }
       user.markModified('conversationState')
       await user.save()
       await reply(user, from,

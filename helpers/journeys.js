@@ -171,9 +171,47 @@ export async function recordFeedback (user, rating, comment) {
 
 /* --------------------------------- the tick --------------------------------- */
 
+const NUDGE_AFTER_MS = TEST_MODE ? 2 * 60 * 1000 : 2 * 60 * 60 * 1000 // 2 min test / 2h prod
+
+const FLOW_LABEL = {
+  link_: 'linking your account',
+  reg_: 'creating your account',
+  reset_: 'resetting your password'
+}
+
+/** Nudge users who abandoned registration/linking/reset mid-flow — once. */
+async function nudgeAbandonedFlows (now) {
+  const stale = await User.find({
+    'conversationState.step': { $regex: '^(link_|reg_|reset_)' },
+    'conversationState.nudgedAt': { $in: [null, undefined] },
+    lastInboundAt: { $lt: new Date(now - NUDGE_AFTER_MS) },
+    supportMode: { $ne: true }
+  }).limit(100)
+
+  for (const u of stale) {
+    try {
+      const step = u.conversationState.step
+      const label = FLOW_LABEL[Object.keys(FLOW_LABEL).find(p => step.startsWith(p))] || 'setting up your account'
+      const text = `Hello ${firstName(u)}! 👋\n\nLooks like we didn't finish *${label}* earlier — you were almost done. 😊\n\nWant to pick up where we left off?`
+      await sendWhatsAppButtons(u.phone, text, [
+        { id: 'cmd:resume_flow', title: '▶️ Continue' },
+        { id: 'cmd:cancel_flow', title: '❌ Cancel' }
+      ])
+      await Message.create({ userId: u._id, from: 'bot', text: `${text} [Buttons: Continue | Cancel]` })
+      u.conversationState = { ...u.conversationState, nudgedAt: new Date() }
+      u.markModified('conversationState')
+      await u.save()
+    } catch (err) {
+      console.error('Flow nudge failed for', u.phone, err.message)
+    }
+  }
+}
+
 async function tick () {
   const now = Date.now()
   const since = (d) => d ? (now - new Date(d).getTime()) / DAY_MS : null
+
+  await nudgeAbandonedFlows(now)
 
   // Only linked users who have interacted before
   const users = await User.find({
