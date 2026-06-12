@@ -6,6 +6,7 @@ import 'dotenv/config'
 import OpenAI from 'openai'
 import MessageModel from '../models/Message.js'
 import { ChuviClient, ChuviApiError } from '../services/chuviApi.js'
+import { recordFeedback } from './journeys.js'
 import { sendWhatsAppMessage, sendWhatsAppButtons, sendWhatsAppCtaUrl, sendWhatsAppList } from './whatsApp.js'
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -128,10 +129,12 @@ COMPLAINTS — CHUVI Recovery Framework: Thank → Understand → Take ownership
 - ESCALATE IMMEDIATELY (escalate_to_support) for: damage claims, refund requests, threats or legal mentions, social-media escalation, repeated complaints from the same customer, or a missing item not resolved quickly. Confirm a human will take over in this same chat.
 
 FEEDBACK (when customers rate or comment after delivery)
-- 5★: warm thanks ("Thank you so much 💙 we're glad you loved the service").
-- 4★: thanks + "what can we do to make it 5 stars next time?"
-- 3★ or below: thank them for honesty, apologise, ask exactly what happened — and escalate to a human; negative feedback is never handled by automation alone.
-- Never argue with feedback. Never turn feedback into selling.
+- When a customer gives a rating (stars, a number, or picks from the rating list), ALWAYS call record_feedback with the rating (1-5) and their comment.
+- 5★: warm thanks ("Thank you so much 💙 we're glad you loved the service"), then the referral note: "If anyone around you ever needs help with laundry, feel free to keep CHUVI in mind — we'd be happy to help them too. 😊"
+- 4★: thanks + "what can we do to make it 5 stars next time?" — then the same referral note.
+- 3★ or below: thank them for honesty, apologise, ask exactly what happened — and escalate_to_support; negative feedback is never handled by automation alone.
+- "I haven't used it yet": no problem at all, ask them to check when they can.
+- Never argue with feedback. Never turn feedback into selling. Never ask unhappy customers for referrals.
 
 RETENTION TONE
 Good retention says "we're still here", never "order again". Don't push subscriptions on new customers — only mention plans if the customer asks, or if they're clearly a regular (several successful orders).
@@ -380,6 +383,22 @@ const tools = [
     }
   },
 
+  {
+    type: 'function',
+    function: {
+      name: 'record_feedback',
+      description: 'Record a customer rating (1-5) after delivery. ALWAYS call when a rating is given. Returns guidance for the follow-up.',
+      parameters: {
+        type: 'object',
+        properties: {
+          rating: { type: 'integer', minimum: 1, maximum: 5 },
+          comment: { type: 'string', description: 'their own words, verbatim' }
+        },
+        required: ['rating']
+      }
+    }
+  },
+
   // support
   {
     type: 'function',
@@ -402,7 +421,7 @@ async function execTool (name, args, ctx) {
   const api = new ChuviClient(botUser)
 
   const needsLink = ![
-    'get_price_list', 'escalate_to_support',
+    'get_price_list', 'escalate_to_support', 'record_feedback',
     'send_payment_button', 'send_quick_replies', 'send_list'
   ].includes(name)
 
@@ -475,6 +494,9 @@ async function execTool (name, args, ctx) {
           items
         }
         const order = await api.createBookOrder(payload)
+        botUser.journey = { ...botUser.journey, lastActivityAt: new Date(), r1At: null, r2At: null, r3At: null }
+        botUser.markModified('journey')
+        await botUser.save()
         return { order, note: 'If billingType is pay-per-item, offer a Paystack link (get_payment_link) or wallet payment now.' }
       }
       case 'order_history': return await api.orderHistory(args)
@@ -514,6 +536,12 @@ async function execTool (name, args, ctx) {
         await sendWhatsAppList(botUser.phone, args.body, args.button_text, rows, { sectionTitle: args.section_title })
         await MessageModel.create({ userId: botUser._id, from: 'bot', text: `${args.body} [List "${args.button_text}": ${rows.map(r => r.title).join(' | ')}]` })
         return { sent: true, note: 'List delivered. Reply NO_REPLY unless you have something new to add.' }
+      }
+
+      case 'record_feedback': {
+        await recordFeedback(botUser, args.rating, args.comment || '')
+        if (args.rating >= 4) return { saved: true, next: 'Thank them warmly and add the referral note. Ask permission before any public use of their words.' }
+        return { saved: true, next: 'Thank them for honesty, apologise, ask what happened, then escalate_to_support with their comment.' }
       }
 
       case 'escalate_to_support': {

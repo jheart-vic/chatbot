@@ -138,6 +138,7 @@ export class ChuviClient {
       this.botUser.chuvi.userId = user._id
       this.botUser.chuvi.email = user.email
       this.botUser.chuvi.linkedAt = new Date()
+      this.botUser.knownEmail = user.email // remembered even after unlink
       this.botUser.markModified('chuvi')
       await this.botUser.save()
     }
@@ -159,6 +160,41 @@ export class ChuviClient {
   verifyOtp (email, otp) { return this.request('post', '/auth/verify-otp', { body: { email, otp, userType: 'user' } }) }
   resendOtp (email) { return this.request('post', '/auth/resend-otp', { body: { email, userType: 'user' } }) }
   forgotPassword (email) { return this.request('post', '/auth/forgot-password', { body: { email, userType: 'user' } }) }
+
+  /**
+   * Side-effect-free existence check: attempts login with a throwaway password
+   * and classifies the backend's error message. Sends NO emails.
+   * Returns 'free' | 'unverified' | 'exists' | 'unknown'.
+   */
+  async probeEmail (email) {
+    try {
+      const res = await this.http.post('/auth/login', {
+        email,
+        password: `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        userType: 'user'
+      })
+      const payload = res.data
+      if (payload?.success !== false) return 'exists' // shouldn't happen with a random password
+      const msg = JSON.stringify(payload)
+      if (/user not found/i.test(msg)) return 'free'
+      if (/not verified/i.test(msg)) return 'unverified'
+      return 'exists' // invalid credentials → account exists with a different password
+    } catch (err) {
+      const msg = JSON.stringify(err.response?.data || '')
+      if (/user not found/i.test(msg)) return 'free'
+      if (/not verified/i.test(msg)) return 'unverified'
+      if (err.response) return 'exists'
+      return 'unknown' // network problem — don't block registration on it
+    }
+  }
+
+  verifyResetPasswordOtp (email, otp) {
+    return this.request('post', '/auth/verify-reset-password-otp', { body: { email, otp, userType: 'user' } })
+  }
+
+  resetPassword (resetToken, password) {
+    return this.request('post', '/auth/reset-password', { body: { resetToken, password, userType: 'user' } })
+  }
 
   async unlinkLocal () {
     this.botUser.chuvi = {}

@@ -9,6 +9,7 @@ import cors from 'cors'
 
 import whatsappRoutes from './routes/whatsappRoutes.js'
 import internalRoutes from './routes/internalRoutes.js'
+import { startJourneyEngine } from './helpers/journeys.js'
 
 dotenv.config()
 
@@ -29,8 +30,9 @@ mongoose
   .connect(process.env.MONGO_URL)
   .then(() => {
     console.log('MongoDB connected')
+    startJourneyEngine()
     app.listen(process.env.PORT || 5000, () => {
-      console.log(`Bot running on port ${process.env.PORT || 5500}`)
+      console.log(`Bot running on port ${process.env.PORT || 5000}`)
     })
   })
   .catch(err => console.error('MongoDB connection error:', err))

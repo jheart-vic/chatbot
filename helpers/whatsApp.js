@@ -138,3 +138,24 @@ export const sendWhatsAppCtaUrl = (to, body, displayText, url, opts) =>
 /** List picker (max 10 rows). rows: [{ id, title, description }] */
 export const sendWhatsAppList = (to, body, buttonText, rows, opts) =>
   post(buildListPayload(to, body, buttonText, rows, opts))
+
+/** Meta-approved template message — required outside the 24h customer window.
+ *  bodyParams fill {{1}}, {{2}}... in the template body. */
+export const sendWhatsAppTemplate = (to, templateName, bodyParams = [], lang = 'en') =>
+  post({
+    messaging_product: 'whatsapp',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: lang },
+      ...(bodyParams.length && {
+        components: [
+          {
+            type: 'body',
+            parameters: bodyParams.map(p => ({ type: 'text', text: String(p) }))
+          }
+        ]
+      })
+    }
+  })

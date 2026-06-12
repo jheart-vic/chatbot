@@ -7,6 +7,7 @@ import express from 'express'
 import User from '../models/User.js'
 import Message from '../models/Message.js'
 import { sendWhatsAppMessage, sendWhatsAppButtons } from '../helpers/whatsApp.js'
+import { onOrderDelivered } from '../helpers/journeys.js'
 
 const router = express.Router()
 
@@ -75,6 +76,12 @@ router.post('/payment-event', async (req, res) => {
     if (!botUser) {
       // Not an error — the customer may simply not use WhatsApp
       return res.status(200).json({ success: true, delivered: false, reason: 'no linked WhatsApp user' })
+    }
+
+    // Delivery event → T1 + journey reset (handled by the journey engine)
+    if (event === 'order-delivered') {
+      await onOrderDelivered(botUser, payload)
+      return res.status(200).json({ success: true, delivered: true })
     }
 
     const text = buildText(event, payload)

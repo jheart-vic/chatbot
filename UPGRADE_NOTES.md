@@ -94,6 +94,27 @@ Dependencies slimmed accordingly: dropped `luxon`, `node-cron`, `jsonwebtoken` (
 - **General conversation**: the agent chats naturally (greetings, small talk) and steers back to laundry; it can give quick fabric-care/stain tips, and politely declines unrelated tasks (homework, code, news) while staying in the CHUVI lane.
 - **Payment failures**: backend webhook now handles `charge.failed` (marks the Payment record failed, notifies the customer on WhatsApp with the gateway reason + "💳 New Link / 🆘 Talk to Agent" buttons) and notifies on `invoice.payment_failed` (subscription renewal failure). The agent also has a support pattern for "my payment failed / I was debited": reassure (failed charges reverse automatically), offer a fresh link or wallet payment, check paymentStatus, escalate with the reference — never argue.
 
+## Follow-up, retention & reactivation journeys (new)
+
+`helpers/journeys.js` runs the manual's full timeline automatically:
+- **T1** delivery confirmation — instant, triggered by the backend's rider mark-delivered AND in-person collection endpoints (both now fire an `order-delivered` event to the bot). Includes ✅ All Good / ⚠️ Report Issue buttons and the pickup-vs-delivery wording variants.
+- **T2** feedback request — +1 day, as a 5-row rating list. One gentle reminder +2 days later, only if no reply. The agent's `record_feedback` tool captures the rating: ≥4★ → thanks + the manual's referral note; ≤3★ → journeys stop, apology + escalation to a human.
+- **T3** retention check-in — +7 days, segment-aware (student / professional / household texts from the manual).
+- **Reactivation R1→R2→R3** — dormancy 21d (student/household) / 35d (professional), then +7d, +7d, then full stop ("door stays open"). A new order or delivery resets the dormancy clock.
+- Respect rules: nothing sends while `supportMode` is on; negative feedback halts automation until the next delivery; no chasing after the reminder or after R3.
+
+**Modes (env):**
+- `JOURNEY_TEST_MINUTES=true` → 1 day = 1 minute, tick every 20s (watch a 35-day journey in ~35 min)
+- `JOURNEY_USE_TEMPLATES=true` → sends Meta-approved templates (REQUIRED in production: T2 onward falls outside WhatsApp's 24h window). `false` = free-form sends for dev-mode testing while you're actively chatting. Template names configurable via `TPL_T1..TPL_R3` env vars (defaults `chuvi_delivery_confirmation`, `chuvi_feedback_request`, `chuvi_feedback_reminder`, `chuvi_retention_checkin`, `chuvi_reactivation_1/2/3`).
+
+Customer `segment` lives on the bot's User model (default `student`).
+
+## Existing-account detection + password reset (new)
+
+- **"create account" with a known account**: if this WhatsApp number has ever linked a CHUVI account, the bot reminds them immediately — "You already have an account (*email*)" — with buttons **🔑 Log in / 🔁 Reset password / 📝 New account**. The remembered email (`knownEmail`) survives unlinking.
+- **Email probe during registration**: when any user enters an email in the create-account flow, the bot checks it against the backend with a side-effect-free probe (a throwaway-password login attempt — no emails sent). Already registered & verified → Log in / Reset password buttons; registered but unverified → fresh OTP + straight to verification; free → continues normally. If the backend is unreachable the probe returns `unknown` and registration proceeds (the backend's own duplicate check still applies).
+- **Full password-reset flow in chat**: *reset password* (typed or button) → email (one-tap button if we remember it) → reset code via `/auth/forgot-password` → OTP verify (`/auth/verify-reset-password-otp`, returns a reset JWT) → new password (masked in logs like all passwords) → `/auth/reset-password` → straight into account linking. Compromised-account messaging included.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.

@@ -107,7 +107,29 @@ async function handleLinkingFlow (botUser, text) {
 
     case 'reg_email': {
       if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email — try again (or *cancel*).'
-      await setState('reg_password', { email: t.toLowerCase() })
+      const email = t.toLowerCase()
+      const status = await api.probeEmail(email)
+
+      if (status === 'exists') {
+        await setState(null)
+        return {
+          text: `ℹ️ *${email}* already has a CHUVI account. 😊\n\nWould you like to *log in* instead?\n\nIf you don't remember your password — or you feel your account may have been compromised — you can *reset your password* right here.`,
+          buttons: [
+            { id: 'cmd:link_account', title: '🔑 Log in' },
+            { id: 'cmd:reset_password', title: '🔁 Reset password' }
+          ]
+        }
+      }
+
+      if (status === 'unverified') {
+        try {
+          await api.resendOtp(email)
+          await setState('reg_otp', { email })
+          return `ℹ️ *${email}* is already registered but not yet verified — possibly from an earlier attempt.\n\n📨 I've sent a fresh verification code to that email. Send me the *OTP* to verify it (or *cancel*).`
+        } catch (_) { /* fall through to normal flow */ }
+      }
+
+      await setState('reg_password', { email })
       return '🔐 Now choose a *password* (at least 8 characters).\n\n_We don\'t store this message — feel free to delete it after sending._'
     }
 
@@ -155,6 +177,48 @@ async function handleLinkingFlow (botUser, text) {
       }
     }
 
+    case 'reset_email': {
+      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email. Please send the email on your CHUVI account (or *cancel*).'
+      try {
+        await api.forgotPassword(t.toLowerCase())
+        await setState('reset_otp', { email: t.toLowerCase() })
+        return `📨 I've sent a password-reset code to *${t.toLowerCase()}*.\n\nSend me the *OTP* to continue (or *cancel*).`
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Could not start the reset.'
+        if (/not found/i.test(msg)) return `❌ No CHUVI account found for that email.\nCheck the spelling and try again — or reply *create account* if you're new.`
+        return `❌ ${msg}\nPlease try again (or *cancel*).`
+      }
+    }
+
+    case 'reset_otp': {
+      try {
+        const data = await api.verifyResetPasswordOtp(draft.email, t.replace(/\s/g, ''))
+        const resetToken = data?.resetToken || data?.message?.resetToken
+        if (!resetToken) return '❌ Something went wrong verifying the code. Please send the OTP again (or *cancel*).'
+        await setState('reset_password', { resetToken })
+        return '✅ Code verified!\n\n🔐 Now send your *new password* (at least 8 characters).\n\n_We don\'t store this message — feel free to delete it after sending._'
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Verification failed.'
+        return `❌ ${msg}\nSend the code again, or *cancel*.`
+      }
+    }
+
+    case 'reset_password': {
+      if (t.length < 8) return '🔐 Password must be at least 8 characters. Try another one.'
+      try {
+        await api.resetPassword(draft.resetToken, t)
+        const email = draft.email
+        await setState('link_email', {})
+        return {
+          text: `✅ Your password has been changed! 🎉\n\nFor your security, any old sessions are now signed out.\n\nLet's link your account — please send your *email*${email ? ` (*${email}*)` : ''}.`,
+          buttons: email ? [{ id: email, title: '📧 Use ' + email.slice(0, 14) }] : undefined
+        }
+      } catch (err) {
+        const msg = err instanceof ChuviApiError ? err.message : 'Reset failed.'
+        return `❌ ${msg}\nPlease try a different password (or *cancel*).`
+      }
+    }
+
     default:
       return null
   }
@@ -182,7 +246,10 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
         book: 'I want to book a laundry order',
         plans: 'Show me the subscription plans'
       }
-      if (cmd === 'track' && arg) text = `Track my order with id ${arg}`
+      // Button id is a full email (e.g. "Use my email" shortcuts) → use it verbatim,
+      // since the visible title gets clipped to 20 chars
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buttonId)) text = buttonId.toLowerCase()
+      else if (cmd === 'track' && arg) text = `Track my order with id ${arg}`
       else if (cmd === 'pay_wallet' && arg) text = `Pay for my order with id ${arg} from my wallet`
       else if (cmd === 'pay_link' && arg) text = `Send me a payment link for my order with id ${arg}`
       else if (cmd && CMD_TEXT[cmd]) text = CMD_TEXT[cmd]
@@ -207,7 +274,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     }
 
     const step = user.conversationState?.step
-    const isSecretStep = step === 'link_password' || step === 'reg_password'
+    const isSecretStep = step === 'link_password' || step === 'reg_password' || step === 'reset_password'
 
     // Log the inbound message — but never log passwords
     await Message.create({
@@ -231,7 +298,7 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     }
 
     // --- Linking / registration state machine ---
-    if (step?.startsWith('link_') || step?.startsWith('reg_')) {
+    if (step?.startsWith('link_') || step?.startsWith('reg_') || step?.startsWith('reset_')) {
       const flowReply = await handleLinkingFlow(user, text)
       if (flowReply) {
         if (typeof flowReply === 'string') await reply(user, from, flowReply)
@@ -250,10 +317,42 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     }
 
     if (/^create( an)? account$|^register$|^sign ?up$/i.test(normalized)) {
+      const rememberedEmail = user.chuvi?.email || user.knownEmail
+      if (rememberedEmail) {
+        await reply(user, from,
+          `ℹ️ You already have a CHUVI account on this WhatsApp — *${rememberedEmail}*. 😊\n\nWould you like to *log in* instead?\n\nIf you don't remember your password — or you feel your account may have been compromised — you can *reset your password* right here. Or, if you really want a separate account with a different email, tap *New account*.`,
+          { buttons: [
+            { id: 'cmd:link_account', title: '🔑 Log in' },
+            { id: 'cmd:reset_password', title: '🔁 Reset password' },
+            { id: 'cmd:new_account', title: '📝 New account' }
+          ] })
+        return res?.status(200).end()
+      }
       user.conversationState = { step: 'reg_name', linkDraft: {} }
       user.markModified('conversationState')
       await user.save()
       await reply(user, from, '📝 Let\'s create your Chuvi account!\n\nFirst, what\'s your *full name*?')
+      return res?.status(200).end()
+    }
+
+    // Explicit "new account anyway" (from the button) skips the reminder
+    if (buttonId === 'cmd:new_account') {
+      user.conversationState = { step: 'reg_name', linkDraft: {} }
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, '📝 Okay! Let\'s create a new Chuvi account.\n\nFirst, what\'s your *full name*?')
+      return res?.status(200).end()
+    }
+
+    // Password reset entry (typed or via button)
+    if (buttonId === 'cmd:reset_password' || /^(reset|forgot)( my)? ?password$/i.test(normalized)) {
+      const remembered = user.chuvi?.email || user.knownEmail
+      user.conversationState = { step: 'reset_email', linkDraft: {} }
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from,
+        `🔁 Let's reset your password.\n\nPlease send the *email* on your CHUVI account${remembered ? ` (*${remembered}*)` : ''} — we'll send a reset code there.\n(To stop, reply *cancel*.)`,
+        remembered ? { buttons: [{ id: remembered, title: '📧 Use ' + remembered.slice(0, 14) }] } : {})
       return res?.status(200).end()
     }
 
