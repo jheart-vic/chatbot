@@ -30,7 +30,7 @@ mongoose
   .then(() => {
     console.log('MongoDB connected')
     app.listen(process.env.PORT || 5000, () => {
-      console.log(`Bot running on port ${process.env.PORT || 5000}`)
+      console.log(`Bot running on port ${process.env.PORT || 5500}`)
     })
   })
   .catch(err => console.error('MongoDB connection error:', err))

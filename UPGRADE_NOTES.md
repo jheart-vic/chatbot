@@ -88,6 +88,12 @@ chatbot/
 
 Dependencies slimmed accordingly: dropped `luxon`, `node-cron`, `jsonwebtoken` (and the `worker` scripts); lockfile regenerated. Heads-up: the local bot Mongo DB may still contain collections from the old system (orders, employees, finances...); they're harmless but can be dropped — only `users` and `messages` are used now.
 
+## Customer-service playbook + payment failures (new)
+
+- **Agent persona** now embeds the CHUVI Customer Communication Manual: the voice rules (short, calm, glanceable, lightly personal), the conversion flow (greet → qualify → offer → objection → close with one next step), the objection rule (Agree → Reframe → Proof → Forward, with all 8 objection stances), the complaint Recovery Framework (Thank → Understand → Own → Resolve → Follow up) with the manual's escalation triggers, feedback handling by star rating, and the retention tone ("we're still here", never pushy; subscriptions not pitched to new customers).
+- **General conversation**: the agent chats naturally (greetings, small talk) and steers back to laundry; it can give quick fabric-care/stain tips, and politely declines unrelated tasks (homework, code, news) while staying in the CHUVI lane.
+- **Payment failures**: backend webhook now handles `charge.failed` (marks the Payment record failed, notifies the customer on WhatsApp with the gateway reason + "💳 New Link / 🆘 Talk to Agent" buttons) and notifies on `invoice.payment_failed` (subscription renewal failure). The agent also has a support pattern for "my payment failed / I was debited": reassure (failed charges reverse automatically), offer a fresh link or wallet payment, check paymentStatus, escalate with the reference — never argue.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.
