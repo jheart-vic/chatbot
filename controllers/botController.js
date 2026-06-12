@@ -63,6 +63,7 @@ async function handleLinkingFlow (botUser, text) {
       step: next,
       lastStepAt: next ? new Date() : null,
       nudgedAt: null,
+      failCount: 0,
       linkDraft: next ? { ...draft, ...draftPatch } : {}
     }
     botUser.markModified('conversationState')
@@ -74,9 +75,54 @@ async function handleLinkingFlow (botUser, text) {
     return '✅ Okay, cancelled. You can reply *link account* anytime.'
   }
 
+  // 🧠 Conversational input mid-flow (greetings, confusion, help) should NOT be
+  // consumed as emails/passwords/OTPs — orient the user and offer exits instead.
+  const STEP_NEEDS = {
+    link_email: 'the *email* on your CHUVI account',
+    link_password: 'your *password*',
+    reg_name: 'your *full name*',
+    reg_email: 'the *email* for your new account',
+    reg_password: 'a *password* (at least 8 characters)',
+    reg_otp: 'the *OTP code* from your email',
+    reset_email: 'the *email* on your account',
+    reset_otp: 'the *reset code* from your email',
+    reset_password: 'your *new password* (at least 8 characters)'
+  }
+  if (/^(hi|hello|hey|good (morning|afternoon|evening)|help|what|why|how|huh|\?+|i'?m (stuck|confused|lost)|stuck|confused)\b/i.test(t) || /^hello there$/i.test(t)) {
+    return {
+      text: `😊 No wahala — we're in the middle of setting things up.\n\nRight now I just need ${STEP_NEEDS[step] || 'one more detail'}.\n\nOr pick an option below:`,
+      buttons: [
+        { id: 'cmd:resume_flow', title: '▶️ Continue' },
+        { id: 'cmd:start_over', title: '🔄 Start over' },
+        { id: 'cmd:agent', title: '🆘 Talk to agent' }
+      ]
+    }
+  }
+
+  // After 2 failed attempts on the same step, stop repeating — offer exits.
+  const bumpFail = async () => {
+    const n = (botUser.conversationState.failCount || 0) + 1
+    botUser.conversationState = { ...botUser.conversationState, failCount: n }
+    botUser.markModified('conversationState')
+    await botUser.save()
+    return n
+  }
+  const fail = async (text) => {
+    const n = await bumpFail()
+    if (n < 2) return text
+    return {
+      text: `${text}\n\nHaving trouble? I can help another way:`,
+      buttons: [
+        { id: 'cmd:start_over', title: '🔄 Start over' },
+        { id: 'cmd:agent', title: '🆘 Talk to agent' },
+        { id: 'cmd:cancel_flow', title: '❌ Cancel' }
+      ]
+    }
+  }
+
   switch (step) {
     case 'link_email': {
-      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email. Please send the email on your Chuvi account (or *cancel*).'
+      if (!EMAIL_RE.test(t)) return await fail('📧 That doesn\'t look like an email. Please send the email on your Chuvi account (or *cancel*).')
       await setState('link_password', { email: t.toLowerCase() })
       return '🔐 Got it. Now send your *password*.\n\n_For your privacy we don\'t store this message, and you can delete it from the chat after sending._'
     }
@@ -95,9 +141,9 @@ async function handleLinkingFlow (botUser, text) {
           ]
         }
       } catch (err) {
-        const msg = err instanceof ChuviApiError ? err.message : 'Login failed.'
+        const msg = (err instanceof ChuviApiError ? err.message : err.message) || 'Login failed.'
         await setState('link_email')
-        return `❌ ${msg}\n\nLet's try again — please send your *email* (or *cancel*, or *create account* if you don't have one).`
+        return await fail(`❌ ${msg}\n\nLet's try again — please send your *email* (or *cancel*, or *create account* if you don't have one).`)
       }
     }
 
@@ -108,7 +154,7 @@ async function handleLinkingFlow (botUser, text) {
     }
 
     case 'reg_email': {
-      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email — try again (or *cancel*).'
+      if (!EMAIL_RE.test(t)) return await fail('📧 That doesn\'t look like an email — try again (or *cancel*).')
       const email = t.toLowerCase()
       const status = await api.probeEmail(email)
 
@@ -136,7 +182,7 @@ async function handleLinkingFlow (botUser, text) {
     }
 
     case 'reg_password': {
-      if (t.length < 8) return '🔐 Password must be at least 8 characters. Try another one.'
+      if (t.length < 8) return await fail('🔐 Password must be at least 8 characters. Try another one.')
       try {
         await api.register({
           fullName: draft.fullName,
@@ -147,7 +193,7 @@ async function handleLinkingFlow (botUser, text) {
         await setState('reg_otp', { password: undefined })
         return `📨 Almost done! We've sent a verification code to *${draft.email}*. Please send me the *OTP*.`
       } catch (err) {
-        const msg = err instanceof ChuviApiError ? err.message : 'Registration failed.'
+        const msg = (err instanceof ChuviApiError ? err.message : err.message) || 'Registration failed.'
         if (/exist/i.test(msg)) {
           // The email is already registered — often from an earlier attempt where
           // the OTP email failed. Recover by resending the code and verifying.
@@ -160,7 +206,7 @@ async function handleLinkingFlow (botUser, text) {
             return `ℹ️ ${msg}\nLooks like you already have an account — let's link it instead. Please send your *email*.`
           }
         }
-        return `❌ ${msg}\nPlease try a different password (or *cancel*).`
+        return await fail(`❌ ${msg}\nPlease try a different password (or *cancel*).`)
       }
     }
 
@@ -175,12 +221,12 @@ async function handleLinkingFlow (botUser, text) {
           await api.resendOtp(draft.email).catch(() => {})
           return '📨 A new code has been sent. Please send me the OTP.'
         }
-        return `❌ ${msg}\nSend the code again, reply *resend* for a new one, or *cancel*.`
+        return await fail(`❌ ${msg}\nSend the code again, reply *resend* for a new one, or *cancel*.`)
       }
     }
 
     case 'reset_email': {
-      if (!EMAIL_RE.test(t)) return '📧 That doesn\'t look like an email. Please send the email on your CHUVI account (or *cancel*).'
+      if (!EMAIL_RE.test(t)) return await fail('📧 That doesn\'t look like an email. Please send the email on your CHUVI account (or *cancel*).')
       try {
         await api.forgotPassword(t.toLowerCase())
         await setState('reset_otp', { email: t.toLowerCase() })
@@ -201,12 +247,12 @@ async function handleLinkingFlow (botUser, text) {
         return '✅ Code verified!\n\n🔐 Now send your *new password* (at least 8 characters).\n\n_We don\'t store this message — feel free to delete it after sending._'
       } catch (err) {
         const msg = err instanceof ChuviApiError ? err.message : 'Verification failed.'
-        return `❌ ${msg}\nSend the code again, or *cancel*.`
+        return await fail(`❌ ${msg}\nSend the code again, or *cancel*.`)
       }
     }
 
     case 'reset_password': {
-      if (t.length < 8) return '🔐 Password must be at least 8 characters. Try another one.'
+      if (t.length < 8) return await fail('🔐 Password must be at least 8 characters. Try another one.')
       try {
         await api.resetPassword(draft.resetToken, t)
         const email = draft.email
@@ -315,6 +361,48 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
       return res?.status(200).end()
     }
 
+    // 🌍 GLOBAL ESCAPES — work anywhere, including mid-flow.
+    // (Clearing the WhatsApp chat only clears the phone; bot state lives here.)
+    if (/^(reset|restart|start over|start afresh|let'?s start afresh|menu|main menu)$/i.test(normalized)) {
+      user.conversationState = {}
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, '🔄 All reset — fresh start! 😊\n\nWhat would you like to do?', {
+        buttons: user.chuvi?.accessToken
+          ? [{ id: 'cmd:book', title: '🧺 Book Order' }, { id: 'cmd:balance', title: '👛 Wallet' }, { id: 'cmd:my_orders', title: '🧾 My Orders' }]
+          : [{ id: 'cmd:link_account', title: '🔗 Link account' }, { id: 'cmd:create_account', title: '📝 Create account' }, { id: 'cmd:prices', title: '🏷️ See prices' }]
+      })
+      return res?.status(200).end()
+    }
+
+    if (buttonId === 'cmd:agent' || /^(agent|human|talk to (a |an )?(human|agent|person)|customer (care|service|support))$/i.test(normalized)) {
+      user.conversationState = {}
+      user.supportMode = true
+      user.markModified('conversationState')
+      await user.save()
+      if (process.env.OPERATIONS_NUMBER) {
+        const who = user.fullName || user.whatsappName || user.phone
+        await sendWhatsAppMessage(
+          process.env.OPERATIONS_NUMBER,
+          `🆘 *Support handoff*\nCustomer: ${who} (wa: ${user.phone})\nLinked account: ${user.chuvi?.email || user.knownEmail || 'not linked'}\n\nCustomer asked for a human directly. Reply to them, then send *#resume* in their chat to hand back to the bot.`
+        ).catch(e => console.error('Ops alert failed:', e.message))
+      }
+      await reply(user, from, '🆘 No problem — I\'ve called a human agent for you. They\'ll continue right here in this chat. 🙏')
+      return res?.status(200).end()
+    }
+
+    if (buttonId === 'cmd:start_over') {
+      const prev = step || ''
+      const entry = prev.startsWith('reg_') ? ['reg_name', '📝 Fresh start! What\'s your *full name*?']
+        : prev.startsWith('reset_') ? ['reset_email', '🔁 Fresh start! Please send the *email* on your CHUVI account.']
+        : ['link_email', '🔗 Fresh start! Please send the *email* on your CHUVI account.']
+      user.conversationState = { step: entry[0], lastStepAt: new Date(), linkDraft: {} }
+      user.markModified('conversationState')
+      await user.save()
+      await reply(user, from, entry[1])
+      return res?.status(200).end()
+    }
+
     // Resume / cancel an abandoned flow (from the follow-up nudge)
     if (buttonId === 'cmd:cancel_flow') {
       user.conversationState = {}
@@ -414,7 +502,9 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
     }
 
     // First contact nudge for unlinked users (still let the agent answer questions)
-    if (!user.chuvi?.accessToken && /^(hi|hello|hey|start|good (morning|afternoon|evening))/i.test(normalized)) {
+    // Only PURE greetings get the canned welcome — "hello, what are your prices?"
+    // must fall through to the AI agent so the question actually gets answered.
+    if (!user.chuvi?.accessToken && /^(hi+|hello( there)?|hey+|start|good (morning|afternoon|evening))\s*[!.,😊🙏👋]*$/i.test(normalized)) {
       const name = profile?.name || user.whatsappName
       const welcome = `👋 Hi ${name}! I'm *Chuvi*, your laundry assistant.\n\nI can book orders, track them, handle payments, manage your wallet and subscription — everything the app does, right here in WhatsApp. 🧺\n\nConnect your Chuvi account to get started, or just ask me anything about our services and prices!`
       await sendWhatsAppButtons(from, welcome, [

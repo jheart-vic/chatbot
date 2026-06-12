@@ -123,6 +123,14 @@ Customer `segment` lives on the bot's User model (default `student`).
 - **Abandoned-flow follow-up**: the journey engine nudges users who went silent mid-registration/linking/reset — once, after 2h (2 min in test mode): "Looks like we didn't finish creating your account — want to pick up where we left off?" with ▶️ Continue / ❌ Cancel buttons. Continue re-prompts the exact step they were on.
 - Note: instant ack solves the Meta-timeout delays, but Render free-tier cold starts (~30-60s wake-up after 15 min idle) are infrastructure: either upgrade the bot to a paid instance or point a free uptime pinger (e.g. UptimeRobot) at the bot's `/` health endpoint every 5-10 minutes.
 
+## Flow intelligence & escape hatches (new)
+
+The registration/linking/reset state machine no longer traps users:
+- **Conversational input mid-flow** (hi, hello, help, "I'm stuck", "?") is recognised and answered with orientation — "we're in the middle of setting up, I just need your password" — plus ▶️ Continue / 🔄 Start over / 🆘 Talk to agent buttons, instead of being consumed as an email/password/OTP attempt.
+- **Two failures on the same step** → the bot stops repeating itself and offers Start over / Talk to agent / Cancel buttons. The counter resets on every step change.
+- **Global escapes work anywhere, even mid-flow**: *reset / restart / start over / start afresh / menu* clears all state and shows a fresh menu (this is the fix for "I cleared the chat but the bot remembered" — chat clearing is phone-side only; bot state lives in the database and now has a proper reset command). *agent / human / customer care* clears the flow, flags supportMode, alerts the ops number, and confirms a human is taking over.
+- **Real backend errors surfaced**: the generic "Registration failed." fallback now shows the actual error message so failures are diagnosable.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.
