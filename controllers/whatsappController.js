@@ -18,8 +18,10 @@ export function parseInbound(message) {
     }
     case "button": // template button replies
       return { text: message.button?.text?.trim() || "", buttonId: message.button?.payload || null };
+    case "audio": // voice notes + audio files
+      return { text: "", buttonId: null, audioId: message.audio?.id || null };
     default:
-      return null; // media, location, etc. — ignored for now
+      return null; // image, location, etc. — ignored for now
   }
 }
 
@@ -32,7 +34,7 @@ export const handleIncomingMessage = async (req, res) => {
     if (!message) return res.sendStatus(200);
 
     const parsed = parseInbound(message);
-    if (!parsed || (!parsed.text && !parsed.buttonId)) return res.sendStatus(200);
+    if (!parsed || (!parsed.text && !parsed.buttonId && !parsed.audioId)) return res.sendStatus(200);
 
     const from = message.from;
     const profile = contact?.profile || {};
@@ -46,7 +48,7 @@ export const handleIncomingMessage = async (req, res) => {
     // the unique externalId index.
     res.sendStatus(200);
 
-    botHandler({ from, text: parsed.text, buttonId: parsed.buttonId, profile, messageId })
+    botHandler({ from, text: parsed.text, buttonId: parsed.buttonId, audioId: parsed.audioId, profile, messageId })
       .catch((err) => console.error("❌ Background processing failed:", err));
   } catch (err) {
     console.error("❌ WhatsApp Webhook Error:", err);

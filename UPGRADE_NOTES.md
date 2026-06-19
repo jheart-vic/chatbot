@@ -131,6 +131,12 @@ The registration/linking/reset state machine no longer traps users:
 - **Global escapes work anywhere, even mid-flow**: *reset / restart / start over / start afresh / menu* clears all state and shows a fresh menu (this is the fix for "I cleared the chat but the bot remembered" — chat clearing is phone-side only; bot state lives in the database and now has a proper reset command). *agent / human / customer care* clears the flow, flags supportMode, alerts the ops number, and confirms a human is taking over.
 - **Real backend errors surfaced**: the generic "Registration failed." fallback now shows the actual error message so failures are diagnosable.
 
+## Voice notes, website & locations (new)
+
+- **Voice notes**: incoming WhatsApp audio is downloaded from Meta's media API and transcribed with OpenAI Whisper (`helpers/voice.js`), then processed exactly like a typed message — so customers can book, ask, complain by voice. Reply is text (per choice). Security: voice notes are rejected on password/OTP steps ("please type this one"), and transcript content is never logged verbatim. Uses the existing OPENAI_API_KEY; optional WHISPER_MODEL env (default whisper-1).
+- **Website link**: shared only when the customer asks about the website / online ordering / other ways to order. Configured in `helpers/companyInfo.js` (or CHUVI_WEBSITE_URL env).
+- **Locations**: branch list lives in `helpers/companyInfo.js` — name, address, area, hours, phone, optional lat/lng. The agent answers "where are you / nearest branch / address" from it, injected live each message so editing that one file updates the bot. (Pending: your actual branch list + website URL.)
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.

@@ -7,6 +7,7 @@ import OpenAI from 'openai'
 import MessageModel from '../models/Message.js'
 import { ChuviClient, ChuviApiError } from '../services/chuviApi.js'
 import { recordFeedback } from './journeys.js'
+import { WEBSITE_URL, locationsForPrompt, BRANCHES } from './companyInfo.js'
 import { sendWhatsAppMessage, sendWhatsAppButtons, sendWhatsAppCtaUrl, sendWhatsAppList } from './whatsApp.js'
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -92,6 +93,10 @@ Short. Clear. Calm. Human. Professional. Lightly personal. Understood at a glanc
 
 CAPABILITIES (tools)
 Book orders, order history, track orders, report issues; wallet balance/transactions/top-up/pay; Paystack payment links for orders & subscriptions; plans (view/subscribe/cancel/current); profile & addresses; notifications; human escalation. Business hours: Tue–Sat 9am–7pm, Sun 12pm–7pm.
+
+WEBSITE & LOCATIONS
+- Website: share the website link ONLY when the customer asks about the website, ordering online, or other ways to order/track. Don't volunteer it otherwise. If no website is configured, say online ordering is via this WhatsApp for now.
+- Locations: when asked where we are, which branch is nearest, or for an address/directions, give the relevant branch name + address (+ hours if useful) from the LOCATIONS list provided below. If they name an area, point them to the closest branch. If no branches are configured, say you'll connect them to the team for the nearest location (escalate).
 
 GENERAL CONVERSATION & SCOPE
 - People will chat casually — greetings, "how are you", jokes, small talk about their day, school, or work. Respond warmly and briefly like a friendly front-desk person, then gently steer back to how you can help with laundry.
@@ -591,9 +596,15 @@ export async function runAgent (botUser, userText) {
     ? `The user's WhatsApp is linked to Chuvi account ${botUser.chuvi.email}.`
     : 'The user has NOT linked a Chuvi account yet. Account features will return NOT_LINKED.'
 
+  const websiteLine = WEBSITE_URL
+    ? `Website (share only when asked about website/online ordering): ${WEBSITE_URL}`
+    : 'Website: none configured — online ordering is via this WhatsApp for now.'
+  const locationsLine = `LOCATIONS (branches):\n${locationsForPrompt()}`
+
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'system', content: `Context: user's WhatsApp name is ${botUser.whatsappName || 'unknown'}, phone ${botUser.phone}. ${linkedNote} Today: ${new Date().toDateString()}.` },
+    { role: 'system', content: `${websiteLine}\n${locationsLine}` },
     ...(await recentHistory(botUser._id)),
     { role: 'user', content: userText }
   ]

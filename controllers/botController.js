@@ -12,6 +12,7 @@ import User from '../models/User.js'
 import Message from '../models/Message.js'
 import { sendWhatsAppMessage, sendWhatsAppButtons } from '../helpers/whatsApp.js'
 import { runAgent } from '../helpers/agent.js'
+import { transcribeWhatsAppAudio } from '../helpers/voice.js'
 import { ChuviClient, ChuviApiError } from '../services/chuviApi.js'
 
 dotenv.config()
@@ -274,7 +275,7 @@ async function handleLinkingFlow (botUser, text) {
 
 /* ------------------------------ main handler ------------------------------ */
 
-export const handleIncomingMessage = async ({ from, text, buttonId, profile, messageId }, res) => {
+export const handleIncomingMessage = async ({ from, text, buttonId, audioId, profile, messageId }, res) => {
   // WhatsApp's typing indicator expires after ~25s; keep it alive while we work
   // (slow paths: agent runs with multiple backend calls). Cleared in finally.
   let typingKeepAlive = null
@@ -303,6 +304,25 @@ export const handleIncomingMessage = async ({ from, text, buttonId, profile, mes
       else if (cmd && CMD_TEXT[cmd]) text = CMD_TEXT[cmd]
       // otherwise fall through with the button title as text
     }
+    // 🎙️ Voice note → transcribe with Whisper, then treat as normal text input.
+    if (audioId && !text) {
+      await markRead(messageId)
+      // Security: never accept a spoken password/OTP — ask the user to type those.
+      const secretStep = ['link_password', 'reg_password', 'reset_password', 'reg_otp', 'reset_otp']
+        .includes(user.conversationState?.step)
+      if (secretStep) {
+        await sendWhatsAppMessage(from, '🔐 For your security, please *type* this one rather than sending a voice note. 🙏')
+        return res?.status(200).end()
+      }
+      const transcript = await transcribeWhatsAppAudio(audioId)
+      if (!transcript) {
+        await sendWhatsAppMessage(from, '🎙️ Sorry, I couldn\'t quite catch that voice note. Could you try again or type your message?')
+        return res?.status(200).end()
+      }
+      text = transcript
+      console.log('🎙️ Transcribed voice note (' + transcript.length + ' chars)')
+    }
+
     if (!text) return res?.status(200).end()
 
     let user = await User.findOne({ phone: from })
