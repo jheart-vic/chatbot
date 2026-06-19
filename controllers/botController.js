@@ -304,26 +304,8 @@ export const handleIncomingMessage = async ({ from, text, buttonId, audioId, pro
       else if (cmd && CMD_TEXT[cmd]) text = CMD_TEXT[cmd]
       // otherwise fall through with the button title as text
     }
-    // 🎙️ Voice note → transcribe with Whisper, then treat as normal text input.
-    if (audioId && !text) {
-      await markRead(messageId)
-      // Security: never accept a spoken password/OTP — ask the user to type those.
-      const secretStep = ['link_password', 'reg_password', 'reset_password', 'reg_otp', 'reset_otp']
-        .includes(user.conversationState?.step)
-      if (secretStep) {
-        await sendWhatsAppMessage(from, '🔐 For your security, please *type* this one rather than sending a voice note. 🙏')
-        return res?.status(200).end()
-      }
-      const transcript = await transcribeWhatsAppAudio(audioId)
-      if (!transcript) {
-        await sendWhatsAppMessage(from, '🎙️ Sorry, I couldn\'t quite catch that voice note. Could you try again or type your message?')
-        return res?.status(200).end()
-      }
-      text = transcript
-      console.log('🎙️ Transcribed voice note (' + transcript.length + ' chars)')
-    }
-
-    if (!text) return res?.status(200).end()
+    // Allow audio (voice notes have empty text until transcribed below)
+    if (!text && !audioId) return res?.status(200).end()
 
     let user = await User.findOne({ phone: from })
     if (!user) {
@@ -347,6 +329,30 @@ export const handleIncomingMessage = async ({ from, text, buttonId, audioId, pro
     }
 
     const isSecretStep = step === 'link_password' || step === 'reg_password' || step === 'reset_password'
+
+    // 🎙️ Voice note → transcribe with Whisper, then treat as normal text input.
+    if (audioId && !text) {
+      await markRead(messageId)
+      // Security: never accept a spoken password/OTP — ask the user to type those.
+      if (['link_password', 'reg_password', 'reset_password', 'reg_otp', 'reset_otp'].includes(step)) {
+        await sendWhatsAppMessage(from, '🔐 For your security, please *type* this one rather than sending a voice note. 🙏')
+        return res?.status(200).end()
+      }
+      let transcript = null
+      try {
+        transcript = await transcribeWhatsAppAudio(audioId)
+      } catch (e) {
+        console.error('🎙️ transcribe threw:', e.message)
+      }
+      if (!transcript) {
+        await sendWhatsAppMessage(from, '🎙️ I had trouble hearing that voice note. Could you send it again, or type your message? 🙏')
+        return res?.status(200).end()
+      }
+      text = transcript
+      console.log('🎙️ Transcribed voice note (' + transcript.length + ' chars)')
+    }
+
+    if (!text) return res?.status(200).end()
 
     // 🔒 Atomic dedupe: externalId has a unique index, so Meta's webhook
     // retries can never double-process — even if two deliveries race.
