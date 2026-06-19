@@ -76,6 +76,25 @@ async function handleLinkingFlow (botUser, text) {
     return '✅ Okay, cancelled. You can reply *link account* anytime.'
   }
 
+  // 🔀 Flow-switching commands typed mid-flow ("create account", "link account",
+  // "reset password") must escape the current flow, NOT be treated as an email.
+  // Exception: password steps, where such words could be a real password.
+  const isPwStep = step === 'link_password' || step === 'reg_password' || step === 'reset_password'
+  if (!isPwStep) {
+    if (/^create( an)? account$|^register$|^sign ?up$/i.test(t)) {
+      await setState('reg_name')
+      return '📝 Let\'s create your Chuvi account!\n\nFirst, what\'s your *full name*?'
+    }
+    if (/^link( my)? account$|^log ?in$|^sign ?in$/i.test(t)) {
+      await setState('link_email')
+      return '🔗 Let\'s connect your Chuvi account.\n\nPlease send the *email* on your account.'
+    }
+    if (/^(reset|forgot)( my)? ?password$/i.test(t)) {
+      await setState('reset_email')
+      return '🔁 Let\'s reset your password.\n\nPlease send the *email* on your CHUVI account.'
+    }
+  }
+
   // 🧠 Conversational input mid-flow (greetings, confusion, help) should NOT be
   // consumed as emails/passwords/OTPs — orient the user and offer exits instead.
   const STEP_NEEDS = {
@@ -123,7 +142,7 @@ async function handleLinkingFlow (botUser, text) {
 
   switch (step) {
     case 'link_email': {
-      if (!EMAIL_RE.test(t)) return await fail('📧 That doesn\'t look like an email. Please send the email on your Chuvi account (or *cancel*).')
+      if (!EMAIL_RE.test(t)) return await fail('📧 That doesn\'t look like an email address.\n\nPlease send the email on your CHUVI account, reply *create account* if you\'re new, or *cancel* to stop.')
       await setState('link_password', { email: t.toLowerCase() })
       return '🔐 Got it. Now send your *password*.\n\n_For your privacy we don\'t store this message, and you can delete it from the chat after sending._'
     }

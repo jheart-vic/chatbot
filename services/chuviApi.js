@@ -123,7 +123,13 @@ export class ChuviClient {
   /* ============================ AUTH / LINKING ============================ */
 
   async login (email, password) {
-    const res = await this.http.post('/auth/login', { email, password, userType: 'user' })
+    let res
+    try {
+      res = await this.http.post('/auth/login', { email, password, userType: 'user' })
+    } catch (err) {
+      // Backend returns 4xx on bad credentials / unverified — surface its real message
+      throw new ChuviApiError(extractError(err), err.response?.status, err.response?.data)
+    }
     const payload = res.data
     if (payload?.success === false) {
       throw new ChuviApiError(extractError({ response: { data: payload } }), res.status, payload)
@@ -146,9 +152,14 @@ export class ChuviClient {
   }
 
   async register ({ fullName, email, password, phoneNumber }) {
-    const res = await this.http.post('/auth/register', {
-      fullName, email, password, phoneNumber, userType: 'user'
-    })
+    let res
+    try {
+      res = await this.http.post('/auth/register', {
+        fullName, email, password, phoneNumber, userType: 'user'
+      })
+    } catch (err) {
+      throw new ChuviApiError(extractError(err), err.response?.status, err.response?.data)
+    }
     const payload = res.data
     if (payload?.success === false) {
       throw new ChuviApiError(extractError({ response: { data: payload } }), res.status, payload)
