@@ -436,6 +436,14 @@ export const handleIncomingMessage = async ({ from, text, buttonId, audioId, pro
       return res?.status(200).end()
     }
 
+    if (buttonId === 'cmd:cancel_draft') {
+      user.draft = null
+      user.markModified('draft')
+      await user.save()
+      await reply(user, from, '✅ No problem — cleared. Whenever you\'re ready to book or ask anything, I\'m here. 😊')
+      return res?.status(200).end()
+    }
+
     if (buttonId === 'cmd:start_over') {
       const prev = step || ''
       const entry = prev.startsWith('reg_') ? ['reg_name', '📝 Fresh start! What\'s your *full name*?']

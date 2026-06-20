@@ -137,6 +137,14 @@ The registration/linking/reset state machine no longer traps users:
 - **Website link**: shared only when the customer asks about the website / online ordering / other ways to order. Configured in `helpers/companyInfo.js` (or CHUVI_WEBSITE_URL env).
 - **Locations**: branch list lives in `helpers/companyInfo.js` — name, address, area, hours, phone, optional lat/lng. The agent answers "where are you / nearest branch / address" from it, injected live each message so editing that one file updates the bot. (Pending: your actual branch list + website URL.)
 
+## Resume where you left off — bookings & inquiries (new)
+
+Registration/linking/reset already resumed (saved step + nudge). Now bookings and inquiries do too:
+- The agent saves progress via a `save_draft` tool (kind 'booking' or 'inquiry') after each meaningful step — a short summary + structured details on the User's `draft` field. It's cleared automatically when the order is placed, or via `clear_draft` on cancel/abandon.
+- When a customer returns, any saved draft is injected into the agent's context, so it continues from there instead of starting over.
+- If they go quiet with an unfinished draft, the journey engine sends ONE welcome-back nudge (after 2h / 2min in test mode): "We didn't get to finish an order you were setting up: [summary] — want to pick up where we left off?" with ▶️ Continue / ❌ Cancel. Only fires when not mid structured-flow and not in support mode.
+- All draft state is in MongoDB, so it survives restarts/redeploys.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.

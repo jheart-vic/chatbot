@@ -32,6 +32,9 @@ const userSchema = new mongoose.Schema (
     knownEmail: {type: String}, // last successfully linked email (kept after unlink)
     segment: {type: String, enum: ['student', 'professional', 'household'], default: 'student'},
     journey: {type: Object, default: {}}, // post-delivery & reactivation journey state
+    // In-progress booking or inquiry the customer can resume later.
+    // { kind: 'booking'|'inquiry', summary, data, updatedAt, resumedNudgeAt }
+    draft: {type: Object, default: null},
   },
   {timestamps: true}
 );

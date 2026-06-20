@@ -160,6 +160,9 @@ ORDER BOOKING RULES
 - Required before create_book_order: items (name + quantity), serviceType, serviceTier (classic/premium/vip), deliverySpeed (standard/express/same-day), pickup and/or delivery (address, date, a time slot from live config), billingType (pay-per-item / pay-from-wallet / pay-from-subscription).
 - Pre-fill name/phone/addresses from get_account and list_addresses instead of re-asking.
 - ALWAYS show a clear order summary with the total and get an explicit "yes" before calling create_book_order.
+- SAVE PROGRESS: while collecting order details across messages, call save_draft after each meaningful step with a short summary and the details gathered so far (kind 'booking'). For a multi-step inquiry the customer is working through, use kind 'inquiry'. This lets them resume later if they go quiet.
+- When an order is successfully created (or the customer abandons/cancels), call clear_draft.
+- If the conversation context shows a saved draft and the customer returns, acknowledge it and continue from there rather than starting over.
 
 ACCOUNT
 - If a tool returns NOT_LINKED: explain they need to connect their CHUVI account — reply *link account* (or *create account* if new). Never ask for their password yourself; the secure flow handles it.
@@ -396,6 +399,30 @@ const tools = [
   {
     type: 'function',
     function: {
+      name: 'save_draft',
+      description: 'Save the customer\'s in-progress booking or inquiry so they can resume later if they go quiet. Call after each meaningful step.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['booking', 'inquiry'] },
+          summary: { type: 'string', description: 'one short human line, e.g. "Booking: 2 suits, pickup 19 Ofoelo St, needs back tomorrow"' },
+          data: { type: 'object', description: 'structured details gathered so far (items, address, dates, etc.)' }
+        },
+        required: ['kind', 'summary']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'clear_draft',
+      description: 'Clear the saved draft once the task is completed, cancelled, or abandoned.',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'record_feedback',
       description: 'Record a customer rating (1-5) after delivery. ALWAYS call when a rating is given. Returns guidance for the follow-up.',
       parameters: {
@@ -431,7 +458,7 @@ async function execTool (name, args, ctx) {
   const api = new ChuviClient(botUser)
 
   const needsLink = ![
-    'get_price_list', 'escalate_to_support', 'record_feedback',
+    'get_price_list', 'escalate_to_support', 'record_feedback', 'save_draft', 'clear_draft',
     'send_payment_button', 'send_quick_replies', 'send_list'
   ].includes(name)
 
@@ -505,7 +532,9 @@ async function execTool (name, args, ctx) {
         }
         const order = await api.createBookOrder(payload)
         botUser.journey = { ...botUser.journey, lastActivityAt: new Date(), r1At: null, r2At: null, r3At: null }
+        botUser.draft = null // order placed → nothing left to resume
         botUser.markModified('journey')
+        botUser.markModified('draft')
         await botUser.save()
         return { order, note: 'If billingType is pay-per-item, offer a Paystack link (get_payment_link) or wallet payment now.' }
       }
@@ -546,6 +575,26 @@ async function execTool (name, args, ctx) {
         await sendWhatsAppList(botUser.phone, args.body, args.button_text, rows, { sectionTitle: args.section_title })
         await MessageModel.create({ userId: botUser._id, from: 'bot', text: `${args.body} [List "${args.button_text}": ${rows.map(r => r.title).join(' | ')}]` })
         return { sent: true, note: 'List delivered. Reply NO_REPLY unless you have something new to add.' }
+      }
+
+      case 'save_draft': {
+        botUser.draft = {
+          kind: args.kind,
+          summary: args.summary || '',
+          data: args.data || {},
+          updatedAt: new Date(),
+          resumedNudgeAt: null
+        }
+        botUser.markModified('draft')
+        await botUser.save()
+        return { saved: true }
+      }
+
+      case 'clear_draft': {
+        botUser.draft = null
+        botUser.markModified('draft')
+        await botUser.save()
+        return { cleared: true }
       }
 
       case 'record_feedback': {
@@ -611,6 +660,7 @@ export async function runAgent (botUser, userText) {
     { role: 'system', content: `Context: user's WhatsApp name is ${botUser.whatsappName || 'unknown'}, phone ${botUser.phone}. ${linkedNote} Today: ${new Date().toDateString()}.` },
     { role: 'system', content: `${websiteLine}\n${locationsLine}` },
     { role: 'system', content: 'Always respond to the customer\'s MOST RECENT message first and directly. If it\'s a greeting or aside, acknowledge it warmly before continuing any task in progress. Do not repeat a previous question verbatim if the customer said something new.' },
+    ...(botUser.draft ? [{ role: 'system', content: `RESUMABLE DRAFT (the customer had an unfinished ${botUser.draft.kind || 'task'}): ${botUser.draft.summary || ''}. Details so far: ${JSON.stringify(botUser.draft.data || {})}. If they want to continue, pick up from here; if they start something new, call clear_draft first.` }] : []),
     ...(await recentHistory(botUser._id)),
     { role: 'user', content: userText }
   ]

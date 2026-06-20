@@ -207,11 +207,41 @@ async function nudgeAbandonedFlows (now) {
   }
 }
 
+/** Nudge users who left a booking/inquiry unfinished — once, after they go quiet. */
+async function nudgeAbandonedDrafts (now) {
+  const stale = await User.find({
+    draft: { $ne: null },
+    'draft.resumedNudgeAt': { $in: [null, undefined] },
+    lastInboundAt: { $lt: new Date(now - NUDGE_AFTER_MS) },
+    supportMode: { $ne: true },
+    'conversationState.step': { $in: [null, undefined] } // not mid structured-flow
+  }).limit(100)
+
+  for (const u of stale) {
+    try {
+      const d = u.draft || {}
+      const what = d.kind === 'inquiry' ? 'something you were asking about' : 'an order you were setting up'
+      const text = `Hello ${firstName(u)}! 👋\n\nWe didn't get to finish *${what}* earlier:\n_${d.summary || 'your request'}_\n\nWant to pick up where we left off? 😊`
+      await sendWhatsAppButtons(u.phone, text, [
+        { id: 'continue my ' + (d.kind || 'order') + ' where we left off', title: '▶️ Continue' },
+        { id: 'cmd:cancel_draft', title: '❌ Cancel' }
+      ])
+      await Message.create({ userId: u._id, from: 'bot', text: `${text} [Buttons: Continue | Cancel]` })
+      u.draft = { ...d, resumedNudgeAt: new Date() }
+      u.markModified('draft')
+      await u.save()
+    } catch (err) {
+      console.error('Draft nudge failed for', u.phone, err.message)
+    }
+  }
+}
+
 async function tick () {
   const now = Date.now()
   const since = (d) => d ? (now - new Date(d).getTime()) / DAY_MS : null
 
   await nudgeAbandonedFlows(now)
+  await nudgeAbandonedDrafts(now)
 
   // Only linked users who have interacted before
   const users = await User.find({
