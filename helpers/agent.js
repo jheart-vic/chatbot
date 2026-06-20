@@ -14,6 +14,31 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const MODEL = process.env.OPENAI_MODEL || 'gpt-4o'
 const OPERATIONS_NUMBER = process.env.OPERATIONS_NUMBER
 
+// Delivery-speed booking cutoffs (Africa/Lagos, WAT = UTC+1). After the cutoff
+// the speed can't be booked for same-day completion. Configurable via env.
+const SAME_DAY_CUTOFF_HOUR = parseInt(process.env.SAME_DAY_CUTOFF_HOUR || '10', 10) // 10am
+const EXPRESS_CUTOFF_HOUR = parseInt(process.env.EXPRESS_CUTOFF_HOUR || '14', 10)  // 2pm
+
+function watHourNow () {
+  // Current hour in West Africa Time regardless of server timezone
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Lagos', hour: 'numeric', hour12: false
+  }).formatToParts(new Date())
+  return parseInt(parts.find(p => p.type === 'hour').value, 10)
+}
+
+/** Returns { allowed, reason } for a delivery speed at the current WAT time. */
+export function checkSpeedCutoff (speed) {
+  const h = watHourNow()
+  if (speed === 'same-day' && h >= SAME_DAY_CUTOFF_HOUR) {
+    return { allowed: false, reason: `Same-day orders must be placed before ${SAME_DAY_CUTOFF_HOUR}am. It's past that now, so the earliest options are *express* or *standard*.` }
+  }
+  if (speed === 'express' && h >= EXPRESS_CUTOFF_HOUR) {
+    return { allowed: false, reason: `Express orders must be placed before ${EXPRESS_CUTOFF_HOUR > 12 ? EXPRESS_CUTOFF_HOUR - 12 : EXPRESS_CUTOFF_HOUR}pm. It's past that now, so the available option is *standard*.` }
+  }
+  return { allowed: true }
+}
+
 // Fallback prices used ONLY if the live config can't be fetched (e.g. user not
 // linked yet and asking for a rough quote). Live prices come from
 // GET /admin/admin-order-details (orderItems + fees + surcharges).
@@ -157,6 +182,8 @@ ORDER BOOKING RULES
 - ALWAYS call get_price_list before quoting or summarising — prices, fees, speed charges, tier multipliers come from there (live).
 - ONLY book items that appear on the live price list. NEVER invent a price, NEVER substitute a different item on the customer's behalf, and NEVER proceed to build or confirm an order that contains an item not on the list.
 - If a requested item (e.g. "Suit") is NOT on the live list: tell the customer plainly that it's not currently available, then SHOW them the actual items you can handle (from the price list) and ask which they'd like — or offer to connect them to a human (escalate_to_support) if they specifically need that item. Do not dress this up as "a similar item" and quietly continue.
+- DELIVERY SPEED CHARGES: never say a speed is "free" or "no extra charge" unless get_price_list shows its charge as 0. Standard has no surcharge; *express* and *same-day* DO carry the charges shown in deliverySpeedCharge (plus pickup/delivery fees). Quote the real numbers.
+- BOOKING TIME CUTOFFS: same-day must be booked before 10am, express before 2pm (WAT). get_price_list returns deliverySpeedAvailableNow — if a speed is false, do NOT offer it; tell the customer it's past the cutoff and offer the available speeds instead. create_book_order will also reject a past-cutoff speed.
 - Required before create_book_order: items (name + quantity), serviceType, serviceTier (classic/premium/vip), deliverySpeed (standard/express/same-day), pickup and/or delivery (address, date, a time slot from live config), billingType (pay-per-item / pay-from-wallet / pay-from-subscription).
 - Pre-fill name/phone/addresses from get_account and list_addresses instead of re-asking.
 - ALWAYS show a clear order summary with the total and get an explicit "yes" before calling create_book_order.
@@ -482,6 +509,11 @@ async function execTool (name, args, ctx) {
               items: cfg.orderItems.map(i => ({ name: i.name, price: i.price, isHeavy: !!i.isHeavy })),
               fees: { deliveryFee: cfg.deliveryFee, pickupFee: cfg.pickupFee },
               deliverySpeedCharge: { standard: 0, express: cfg.expressCharge, 'same-day': cfg.sameDayCharge },
+              deliverySpeedAvailableNow: {
+                standard: true,
+                express: checkSpeedCutoff('express').allowed,
+                'same-day': checkSpeedCutoff('same-day').allowed
+              },
               serviceTierMultiplier: { classic: 1, premium: cfg.premiumServiceTierCharge, vip: cfg.vipServiceTierCharge },
               serviceTypes: cfg.serviceTypes,
               pickupTimeSlots: cfg.pickupTimeSlots
@@ -500,6 +532,11 @@ async function execTool (name, args, ctx) {
       }
 
       case 'create_book_order': {
+        // Enforce booking time cutoffs (authoritative check is also on the backend)
+        const cutoff = checkSpeedCutoff(args.deliverySpeed)
+        if (!cutoff.allowed) {
+          return { error: cutoff.reason + ' The order was NOT created — ask the customer to pick an available speed.' }
+        }
         const [account, cfg] = await Promise.all([
           api.getAccount().catch(() => null),
           getLiveOrderConfig(api).catch(e => {

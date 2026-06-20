@@ -145,6 +145,11 @@ Registration/linking/reset already resumed (saved step + nudge). Now bookings an
 - If they go quiet with an unfinished draft, the journey engine sends ONE welcome-back nudge (after 2h / 2min in test mode): "We didn't get to finish an order you were setting up: [summary] — want to pick up where we left off?" with ▶️ Continue / ❌ Cancel. Only fires when not mid structured-flow and not in support mode.
 - All draft state is in MongoDB, so it survives restarts/redeploys.
 
+## Booking time cutoffs + correct speed charges (new)
+
+- **Time cutoffs (WAT)**: same-day must be booked before 10am, express before 2pm. Enforced in TWO places: the bot (checks before building an order, tells the customer which speeds are still available) and the backend `postBookOrder` (authoritative — also covers app/website). Both use Africa/Lagos time regardless of server timezone, and both are env-configurable (SAME_DAY_CUTOFF_HOUR, EXPRESS_CUTOFF_HOUR). get_price_list now returns deliverySpeedAvailableNow so the bot only offers valid speeds.
+- **Correct speed charges**: fixed the bot claiming same-day/express were "no extra charge". The agent must quote the real deliverySpeedCharge (express + same-day carry charges; only standard is free) and never call a paid speed free.
+
 ## Tested
 
 A mock-backend test verified the auth core: login cookie capture, automatic refresh + retry on `jwt_expired` (exactly one refresh call), token rotation persistence, and clean error surfacing on bad credentials. All new modules import cleanly under the project's ESM setup.
